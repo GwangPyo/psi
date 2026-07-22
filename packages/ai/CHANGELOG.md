@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added agy-compatible Google Antigravity OAuth, dynamic `fetchAvailableModels` discovery, and `v1internal` Cloud Code Assist streaming as the built-in `google-gemini-cli` provider.
+
 ## [0.81.1] - 2026-07-21
 
 ### Added

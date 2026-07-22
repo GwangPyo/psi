@@ -37,6 +37,7 @@ export interface ResourceLoaderReloadOptions {
 
 export interface ResourceLoader {
 	getExtensions(): LoadExtensionsResult;
+	getDefaultExtensions?(): Array<{ name: string; enabled: boolean; hidden: boolean }>;
 	getSkills(): { skills: Skill[]; diagnostics: ResourceDiagnostic[] };
 	getPrompts(): { prompts: PromptTemplate[]; diagnostics: ResourceDiagnostic[] };
 	getThemes(): { themes: Theme[]; diagnostics: ResourceDiagnostic[] };
@@ -261,6 +262,16 @@ export class DefaultResourceLoader implements ResourceLoader {
 
 	getExtensions(): LoadExtensionsResult {
 		return this.extensionsResult;
+	}
+
+	getDefaultExtensions(): Array<{ name: string; enabled: boolean; hidden: boolean }> {
+		const disabled = new Set(this.settingsManager.getDisabledDefaultExtensions());
+		const result: Array<{ name: string; enabled: boolean; hidden: boolean }> = [];
+		for (const input of this.extensionFactories) {
+			if (typeof input === "function") continue;
+			result.push({ name: input.name, enabled: !disabled.has(input.name), hidden: input.hidden === true });
+		}
+		return result;
 	}
 
 	getSkills(): { skills: Skill[]; diagnostics: ResourceDiagnostic[] } {
@@ -895,6 +906,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 
 		for (const [index, input] of this.extensionFactories.entries()) {
 			const isNamed = typeof input !== "function";
+			if (isNamed && this.settingsManager.getDisabledDefaultExtensions().includes(input.name)) continue;
 			const factory = isNamed ? input.factory : input;
 			const extensionPath = `<inline:${isNamed ? input.name : index + 1}>`;
 			try {

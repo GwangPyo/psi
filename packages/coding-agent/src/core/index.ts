@@ -29,6 +29,21 @@ export { type BashExecutorOptions, type BashResult, executeBashWithOperations } 
 export type { CompactionResult } from "./compaction/index.ts";
 export { createEventBus, type EventBus, type EventBusController } from "./event-bus.ts";
 export { areExperimentalFeaturesEnabled } from "./experimental.ts";
+export {
+	type ExtensionCatalog,
+	type ExtensionCatalogCandidate,
+	type ExtensionCatalogCommandResult,
+	type ExtensionCatalogCommandRunner,
+	NpmExtensionCatalog,
+} from "./extension-catalog.ts";
+export {
+	type ExtensionManagementAction,
+	type ExtensionManagementListScope,
+	type ExtensionManagementRequest,
+	type ExtensionManagementResult,
+	type ExtensionManagementScope,
+	ExtensionManager,
+} from "./extension-manager.ts";
 // Extensions system
 export {
 	type AgentEndEvent,

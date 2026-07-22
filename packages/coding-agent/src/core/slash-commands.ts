@@ -16,9 +16,31 @@ export interface BuiltinSlashCommand {
 	argumentHint?: string;
 }
 
+export const EXTENSION_BACKED_BUILTIN_SLASH_COMMANDS = new Set(["adversarial_discussion"]);
+
 export const BUILTIN_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
 	{ name: "settings", description: "Open settings menu" },
 	{ name: "model", description: "Select model (opens selector UI)", argumentHint: "<provider/model>" },
+	{
+		name: "subagent-model",
+		description: "Select the default model used by subagents",
+		argumentHint: "[provider/model|status|clear]",
+	},
+	{
+		name: "background-agent-model",
+		description: "Select the default model used by background agents",
+		argumentHint: "[provider/model|status|clear]",
+	},
+	{
+		name: "manage_extension",
+		description: "Add, remove, list, search, or inspect extension packages",
+		argumentHint: "<add|remove|list|search|status> [source] [--local]",
+	},
+	{
+		name: "adversarial_discussion",
+		description: "Run an adversarial discussion between multiple agents",
+		argumentHint: "[goal]",
+	},
 	{ name: "scoped-models", description: "Enable/disable models for Ctrl+P cycling" },
 	{ name: "export", description: "Export session (HTML default, or specify path: .html/.jsonl)" },
 	{ name: "import", description: "Import and resume a session from a JSONL file" },

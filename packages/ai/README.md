@@ -64,6 +64,7 @@ Unified LLM API with provider collections, automatic auth resolution, token and 
 - **NVIDIA NIM**
 - **Anthropic**
 - **Google**
+- **Google Antigravity / agy** (Google account OAuth through Cloud Code Assist, see below)
 - **Vertex AI** (Gemini via Vertex AI)
 - **Mistral**
 - **Groq**
@@ -1107,6 +1108,7 @@ Built-in API implementations live under `./api/<api-id>`:
 | `openai-codex-responses` | `OpenAICodexResponsesOptions` |
 | `azure-openai-responses` | `AzureOpenAIResponsesOptions` |
 | `google-generative-ai` | `GoogleOptions` |
+| `google-gemini-cli` | `GoogleGeminiCliOptions` |
 | `google-vertex` | `GoogleVertexOptions` |
 | `mistral-conversations` | `MistralOptions` |
 | `bedrock-converse-stream` | `BedrockOptions` |
@@ -1422,6 +1424,7 @@ Several providers support OAuth authentication instead of static API keys:
 - **Anthropic** (Claude Pro/Max subscription)
 - **OpenAI Codex** (ChatGPT Plus/Pro subscription, access to GPT-5.x Codex models)
 - **GitHub Copilot** (Copilot subscription)
+- **Google Antigravity / agy** (Google account OAuth through Cloud Code Assist)
 
 Each of these providers carries an `OAuthAuth` on `provider.auth.oauth` with three operations: `login(interaction)` uses the provider-neutral `AuthInteraction.prompt()`/`notify()` protocol and returns a credential, `refresh(credential)` exchanges the refresh token, and `toAuth(credential)` derives request auth (GitHub Copilot's per-account base URL comes from here). Refresh is automatic: `models.getAuth(providerId)` and request paths refresh expired tokens under a credential-store lock, so concurrent requests and processes cannot double-refresh.
 
@@ -1504,6 +1507,8 @@ Provider notes:
 **Azure OpenAI (Responses)**: Uses the Responses API only. Set `AZURE_OPENAI_API_KEY` and either `AZURE_OPENAI_BASE_URL` or `AZURE_OPENAI_RESOURCE_NAME`. `AZURE_OPENAI_BASE_URL` supports both `https://<resource>.openai.azure.com` and `https://<resource>.cognitiveservices.azure.com`; root endpoints are normalized to `.../openai/v1` automatically. Use `AZURE_OPENAI_API_VERSION` (defaults to `v1`) to override the API version if needed. Deployment names are treated as model IDs by default, override with `azureDeploymentName` or `AZURE_OPENAI_DEPLOYMENT_NAME_MAP` using comma-separated `model-id=deployment` pairs (for example `gpt-4o-mini=my-deployment,gpt-4o=prod`). Legacy deployment-based URLs are intentionally unsupported.
 
 **GitHub Copilot**: If you get "The requested model is not supported" error, enable the model manually in VS Code: open Copilot Chat, click the model selector, select the model (warning icon), and click "Enable".
+
+**Google Antigravity / agy**: Register `googleGeminiCliProvider()` or use `builtinModels()`, then log in to provider ID `google-gemini-cli`. Browser and headless authorization-code flows use Antigravity's OAuth client and scopes. Models are discovered from the account's `v1internal:fetchAvailableModels` response instead of a hardcoded Gemini catalog, and requests use the returned backend model ID against `daily-cloudcode-pa.googleapis.com`.
 
 ## Migrating from the Old Global API
 

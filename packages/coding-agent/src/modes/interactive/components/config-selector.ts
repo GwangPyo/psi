@@ -23,11 +23,18 @@ import { theme } from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
 import { keyHint, rawKeyHint } from "./keybinding-hints.ts";
 
-type ResourceType = "extensions" | "skills" | "prompts" | "themes";
+export type ResourceType = "extensions" | "skills" | "prompts" | "themes";
 type ConfigWriteScope = "global" | "project";
 type SettingsScope = "user" | "project";
 type ProjectOverrideState = "inherit" | "load" | "unload";
 export type ScopedResolvedPaths = Record<ConfigWriteScope, ResolvedPaths>;
+
+export interface ConfigSelectorDisplayOptions {
+	title?: string;
+	resourceTypes?: readonly ResourceType[];
+	enabledFirst?: boolean;
+	onToggle?: () => void;
+}
 
 const RESOURCE_TYPES = ["extensions", "skills", "prompts", "themes"] as const satisfies readonly ResourceType[];
 
@@ -46,6 +53,64 @@ interface ResourceItem {
 	displayName: string;
 	groupKey: string;
 	subgroupKey: string;
+}
+
+export function setResolvedResourceEnabled(
+	settingsManager: SettingsManager,
+	cwd: string,
+	agentDir: string,
+	resourceType: ResourceType,
+	resource: ResolvedResource,
+	enabled: boolean,
+): void {
+	const scope = resource.metadata.scope === "project" ? "project" : "user";
+	const settings = scope === "project" ? settingsManager.getProjectSettings() : settingsManager.getGlobalSettings();
+
+	if (resource.metadata.origin === "top-level") {
+		const current = (settings[resourceType] ?? []) as string[];
+		const baseDir = resource.metadata.baseDir ?? (scope === "project" ? join(cwd, CONFIG_DIR_NAME) : agentDir);
+		const pattern = relative(baseDir, resource.path);
+		const updated = current.filter((entry) => {
+			const target =
+				entry.startsWith("!") || entry.startsWith("+") || entry.startsWith("-") ? entry.slice(1) : entry;
+			return target !== pattern;
+		});
+		updated.push(`${enabled ? "+" : "-"}${pattern}`);
+
+		if (scope === "project") {
+			if (resourceType === "extensions") settingsManager.setProjectExtensionPaths(updated);
+			else if (resourceType === "skills") settingsManager.setProjectSkillPaths(updated);
+			else if (resourceType === "prompts") settingsManager.setProjectPromptTemplatePaths(updated);
+			else settingsManager.setProjectThemePaths(updated);
+		} else if (resourceType === "extensions") settingsManager.setExtensionPaths(updated);
+		else if (resourceType === "skills") settingsManager.setSkillPaths(updated);
+		else if (resourceType === "prompts") settingsManager.setPromptTemplatePaths(updated);
+		else settingsManager.setThemePaths(updated);
+		return;
+	}
+
+	const packages = [...(settings.packages ?? [])] as PackageSource[];
+	const packageIndex = packages.findIndex(
+		(pkg) => (typeof pkg === "string" ? pkg : pkg.source) === resource.metadata.source,
+	);
+	if (packageIndex < 0) return;
+
+	let pkg = packages[packageIndex];
+	if (typeof pkg === "string") {
+		pkg = { source: pkg };
+		packages[packageIndex] = pkg;
+	}
+	const pattern = relative(resource.metadata.baseDir ?? dirname(resource.path), resource.path);
+	const current = (pkg[resourceType] ?? []) as string[];
+	const updated = current.filter((entry) => {
+		const target = entry.startsWith("!") || entry.startsWith("+") || entry.startsWith("-") ? entry.slice(1) : entry;
+		return target !== pattern;
+	});
+	updated.push(`${enabled ? "+" : "-"}${pattern}`);
+	(pkg as Record<string, unknown>)[resourceType] = updated;
+
+	if (scope === "project") settingsManager.setProjectPackages(packages);
+	else settingsManager.setPackages(packages);
 }
 
 interface ResourceSubgroup {
@@ -96,10 +161,16 @@ function getGroupLabel(metadata: PathMetadata, agentDir: string): string {
 	return metadata.scope === "user" ? "User settings" : "Project settings";
 }
 
-function buildGroups(resolved: ResolvedPaths, agentDir: string): ResourceGroup[] {
+function buildGroups(
+	resolved: ResolvedPaths,
+	agentDir: string,
+	options: ConfigSelectorDisplayOptions = {},
+): ResourceGroup[] {
 	const groupMap = new Map<string, ResourceGroup>();
+	const resourceTypes = new Set(options.resourceTypes ?? RESOURCE_TYPES);
 
 	const addToGroup = (resources: ResolvedResource[], resourceType: ResourceType) => {
+		if (!resourceTypes.has(resourceType)) return;
 		for (const res of resources) {
 			const { path, enabled, metadata } = res;
 			const groupKey = `${metadata.origin}:${metadata.scope}:${metadata.source}:${metadata.baseDir ?? ""}`;
@@ -158,6 +229,11 @@ function buildGroups(resolved: ResolvedPaths, agentDir: string): ResourceGroup[]
 	// Sort groups: packages first, then top-level; user before project
 	const groups = Array.from(groupMap.values());
 	groups.sort((a, b) => {
+		if (options.enabledFirst) {
+			const aEnabled = a.subgroups.some((subgroup) => subgroup.items.some((item) => item.enabled));
+			const bEnabled = b.subgroups.some((subgroup) => subgroup.items.some((item) => item.enabled));
+			if (aEnabled !== bEnabled) return aEnabled ? -1 : 1;
+		}
 		if (a.origin !== b.origin) {
 			return a.origin === "package" ? -1 : 1;
 		}
@@ -172,7 +248,10 @@ function buildGroups(resolved: ResolvedPaths, agentDir: string): ResourceGroup[]
 	for (const group of groups) {
 		group.subgroups.sort((a, b) => typeOrder[a.type] - typeOrder[b.type]);
 		for (const subgroup of group.subgroups) {
-			subgroup.items.sort((a, b) => a.displayName.localeCompare(b.displayName));
+			subgroup.items.sort((a, b) => {
+				if (options.enabledFirst && a.enabled !== b.enabled) return a.enabled ? -1 : 1;
+				return a.displayName.localeCompare(b.displayName);
+			});
 		}
 	}
 
@@ -185,12 +264,14 @@ type FlatEntry =
 	| { type: "item"; item: ResourceItem };
 
 class ConfigSelectorHeader implements Component {
+	private readonly title: string | undefined;
 	private writeScope: ConfigWriteScope;
 	private projectModeAvailable: boolean;
 
-	constructor(writeScope: ConfigWriteScope, projectModeAvailable: boolean) {
+	constructor(writeScope: ConfigWriteScope, projectModeAvailable: boolean, title?: string) {
 		this.writeScope = writeScope;
 		this.projectModeAvailable = projectModeAvailable;
+		this.title = title;
 	}
 
 	setWriteScope(writeScope: ConfigWriteScope): void {
@@ -200,11 +281,13 @@ class ConfigSelectorHeader implements Component {
 	invalidate(): void {}
 
 	render(width: number): string[] {
-		const title = theme.bold(this.writeScope === "project" ? "Project Local Resources" : "Global Resources");
+		const title = theme.bold(
+			this.title ?? (this.writeScope === "project" ? "Project Local Resources" : "Global Resources"),
+		);
 		const sep = theme.fg("muted", " · ");
 		const switchHint = this.projectModeAvailable ? keyHint("tui.input.tab", "switch mode") + sep : "";
 		const actionHint =
-			this.writeScope === "project" ? rawKeyHint("space", "cycle inherit/+/-") : rawKeyHint("space", "toggle");
+			this.writeScope === "project" ? rawKeyHint("enter", "cycle inherit/+/-") : rawKeyHint("enter", "toggle");
 		const hint = switchHint + actionHint + sep + rawKeyHint("esc", "close");
 		const spacing = Math.max(1, width - visibleWidth(title) - visibleWidth(hint));
 		const scopeHint =
@@ -530,110 +613,11 @@ class ResourceList implements Component, Focusable {
 	}
 
 	private toggleTopLevelResource(item: ResourceItem, enabled: boolean): void {
-		const scope = item.metadata.scope as "user" | "project";
-		const settings =
-			scope === "project" ? this.settingsManager.getProjectSettings() : this.settingsManager.getGlobalSettings();
-
-		const arrayKey = item.resourceType as "extensions" | "skills" | "prompts" | "themes";
-		const current = (settings[arrayKey] ?? []) as string[];
-
-		// Generate pattern for this resource
-		const pattern = this.getResourcePattern(item);
-		const disablePattern = `-${pattern}`;
-		const enablePattern = `+${pattern}`;
-
-		// Filter out existing patterns for this resource
-		const updated = current.filter((p) => {
-			const stripped = p.startsWith("!") || p.startsWith("+") || p.startsWith("-") ? p.slice(1) : p;
-			return stripped !== pattern;
-		});
-
-		if (enabled) {
-			updated.push(enablePattern);
-		} else {
-			updated.push(disablePattern);
-		}
-
-		if (scope === "project") {
-			if (arrayKey === "extensions") {
-				this.settingsManager.setProjectExtensionPaths(updated);
-			} else if (arrayKey === "skills") {
-				this.settingsManager.setProjectSkillPaths(updated);
-			} else if (arrayKey === "prompts") {
-				this.settingsManager.setProjectPromptTemplatePaths(updated);
-			} else if (arrayKey === "themes") {
-				this.settingsManager.setProjectThemePaths(updated);
-			}
-		} else {
-			if (arrayKey === "extensions") {
-				this.settingsManager.setExtensionPaths(updated);
-			} else if (arrayKey === "skills") {
-				this.settingsManager.setSkillPaths(updated);
-			} else if (arrayKey === "prompts") {
-				this.settingsManager.setPromptTemplatePaths(updated);
-			} else if (arrayKey === "themes") {
-				this.settingsManager.setThemePaths(updated);
-			}
-		}
+		setResolvedResourceEnabled(this.settingsManager, this.cwd, this.agentDir, item.resourceType, item, enabled);
 	}
 
 	private togglePackageResource(item: ResourceItem, enabled: boolean): void {
-		const scope = item.metadata.scope as "user" | "project";
-		const settings =
-			scope === "project" ? this.settingsManager.getProjectSettings() : this.settingsManager.getGlobalSettings();
-
-		const packages = [...(settings.packages ?? [])] as PackageSource[];
-		const pkgIndex = packages.findIndex((pkg) => {
-			const source = typeof pkg === "string" ? pkg : pkg.source;
-			return source === item.metadata.source;
-		});
-
-		if (pkgIndex === -1) return;
-
-		let pkg = packages[pkgIndex];
-
-		// Convert string to object form if needed
-		if (typeof pkg === "string") {
-			pkg = { source: pkg };
-			packages[pkgIndex] = pkg;
-		}
-
-		// Get the resource array for this type
-		const arrayKey = item.resourceType as "extensions" | "skills" | "prompts" | "themes";
-		const current = (pkg[arrayKey] ?? []) as string[];
-
-		// Generate pattern relative to package root
-		const pattern = this.getPackageResourcePattern(item);
-		const disablePattern = `-${pattern}`;
-		const enablePattern = `+${pattern}`;
-
-		// Filter out existing patterns for this resource
-		const updated = current.filter((p) => {
-			const stripped = p.startsWith("!") || p.startsWith("+") || p.startsWith("-") ? p.slice(1) : p;
-			return stripped !== pattern;
-		});
-
-		if (enabled) {
-			updated.push(enablePattern);
-		} else {
-			updated.push(disablePattern);
-		}
-
-		(pkg as Record<string, unknown>)[arrayKey] = updated.length > 0 ? updated : undefined;
-
-		// Clean up empty filter object
-		const hasFilters = ["extensions", "skills", "prompts", "themes"].some(
-			(k) => (pkg as Record<string, unknown>)[k] !== undefined,
-		);
-		if (!hasFilters) {
-			packages[pkgIndex] = (pkg as { source: string }).source;
-		}
-
-		if (scope === "project") {
-			this.settingsManager.setProjectPackages(packages);
-		} else {
-			this.settingsManager.setPackages(packages);
-		}
+		setResolvedResourceEnabled(this.settingsManager, this.cwd, this.agentDir, item.resourceType, item, enabled);
 	}
 
 	private renderCheckbox(item: ResourceItem): string {
@@ -851,12 +835,6 @@ class ResourceList implements Component, Focusable {
 		return scope === "project" ? join(this.cwd, CONFIG_DIR_NAME) : this.agentDir;
 	}
 
-	private getResourcePattern(item: ResourceItem): string {
-		const scope = item.metadata.scope as "user" | "project";
-		const baseDir = item.metadata.baseDir ?? this.getTopLevelBaseDir(scope);
-		return relative(baseDir, item.path);
-	}
-
 	private getPackageResourcePattern(item: ResourceItem): string {
 		const baseDir = item.metadata.baseDir ?? dirname(item.path);
 		return relative(baseDir, item.path);
@@ -888,20 +866,21 @@ export class ConfigSelectorComponent extends Container implements Focusable {
 		terminalHeight?: number,
 		writeScope: ConfigWriteScope = "global",
 		projectModeAvailable = true,
+		displayOptions: ConfigSelectorDisplayOptions = {},
 	) {
 		super();
 
 		this.writeScope = writeScope;
 		const groupsByScope = {
-			global: buildGroups(resolvedPaths.global, agentDir),
-			project: buildGroups(resolvedPaths.project, agentDir),
+			global: buildGroups(resolvedPaths.global, agentDir, displayOptions),
+			project: buildGroups(resolvedPaths.project, agentDir, displayOptions),
 		};
 
 		// Add header
 		this.addChild(new Spacer(1));
 		this.addChild(new DynamicBorder());
 		this.addChild(new Spacer(1));
-		this.header = new ConfigSelectorHeader(this.writeScope, projectModeAvailable);
+		this.header = new ConfigSelectorHeader(this.writeScope, projectModeAvailable, displayOptions.title);
 		this.addChild(this.header);
 		this.addChild(new Spacer(1));
 
@@ -916,7 +895,10 @@ export class ConfigSelectorComponent extends Container implements Focusable {
 		);
 		this.resourceList.onCancel = onClose;
 		this.resourceList.onExit = onExit;
-		this.resourceList.onToggle = () => requestRender();
+		this.resourceList.onToggle = () => {
+			displayOptions.onToggle?.();
+			requestRender();
+		};
 		if (projectModeAvailable) {
 			this.resourceList.onSwitchMode = () => {
 				this.switchWriteScope();

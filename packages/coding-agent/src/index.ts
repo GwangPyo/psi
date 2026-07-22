@@ -49,6 +49,21 @@ export {
 	shouldCompact,
 } from "./core/compaction/index.ts";
 export { createEventBus, type EventBus, type EventBusController } from "./core/event-bus.ts";
+export {
+	type ExtensionCatalog,
+	type ExtensionCatalogCandidate,
+	type ExtensionCatalogCommandResult,
+	type ExtensionCatalogCommandRunner,
+	NpmExtensionCatalog,
+} from "./core/extension-catalog.ts";
+export {
+	type ExtensionManagementAction,
+	type ExtensionManagementListScope,
+	type ExtensionManagementRequest,
+	type ExtensionManagementResult,
+	type ExtensionManagementScope,
+	ExtensionManager,
+} from "./core/extension-manager.ts";
 // Extension system
 export type {
 	AgentEndEvent,

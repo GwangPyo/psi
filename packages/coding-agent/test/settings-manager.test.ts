@@ -216,6 +216,38 @@ describe("SettingsManager", () => {
 		});
 	});
 
+	describe("subagent default model", () => {
+		it("uses the trusted project value over the global value", () => {
+			writeFileSync(
+				join(agentDir, "settings.json"),
+				JSON.stringify({ subagentDefaultModel: "anthropic/claude-haiku-4-5" }),
+			);
+			writeFileSync(
+				join(projectDir, ".pi", "settings.json"),
+				JSON.stringify({ subagentDefaultModel: "google/gemini-3-flash-preview" }),
+			);
+
+			const manager = SettingsManager.create(projectDir, agentDir);
+
+			expect(manager.getSubagentDefaultModel()).toBe("google/gemini-3-flash-preview");
+		});
+
+		it("ignores the project value when the project is not trusted", () => {
+			writeFileSync(
+				join(agentDir, "settings.json"),
+				JSON.stringify({ subagentDefaultModel: "anthropic/claude-haiku-4-5" }),
+			);
+			writeFileSync(
+				join(projectDir, ".pi", "settings.json"),
+				JSON.stringify({ subagentDefaultModel: "google/gemini-3-flash-preview" }),
+			);
+
+			const manager = SettingsManager.create(projectDir, agentDir, { projectTrusted: false });
+
+			expect(manager.getSubagentDefaultModel()).toBe("anthropic/claude-haiku-4-5");
+		});
+	});
+
 	describe("error tracking", () => {
 		it("should collect and clear load errors via drainErrors", () => {
 			const globalSettingsPath = join(agentDir, "settings.json");

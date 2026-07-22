@@ -1,66 +1,35 @@
-# Plan Mode Extension
+# PlanFSM Mode Extension
 
-Read-only exploration mode for safe code analysis.
+Read-only exploration mode that produces and executes a validated finite-state-machine plan. The example delegates to the built-in plan extension.
 
 ## Features
 
-- **Built-in write tools disabled**: Disables edit/write while preserving other active tools
-- **Bash allowlist**: Only read-only bash commands are allowed
-- **Plan extraction**: Extracts numbered steps from `Plan:` sections
-- **Progress tracking**: Widget shows completion status during execution
-- **[DONE:n] markers**: Explicit step completion tracking
-- **Session persistence**: State survives session resume
+- Built-in edit/write tools are disabled during exploration.
+- Bash commands pass through a read-only allowlist.
+- `submit_plan_machine` accepts the structured plan and validates references, reachability, forks, joins, bounded loops, and error policies.
+- `plan_transition` advances active states with an explicit event and acceptance evidence.
+- Fork and join hyper-transitions support parallel DAG branches.
+- Every submission includes a dependency analysis and explicit independent state groups. Declared groups require a matching multi-target fork.
+- Guarded transitions and visit limits support bounded loops.
+- The machine definition, runtime snapshot, transition history, and evidence persist in the session.
 
 ## Commands
 
-- `/plan` - Toggle plan mode
-- `/todos` - Show current plan progress
-- `Ctrl+Alt+P` - Toggle plan mode (shortcut)
+- `/plan` toggles PlanFSM mode.
+- `/todos` shows the current machine and runtime state.
+- `Ctrl+Alt+P` toggles PlanFSM mode.
 
-## Usage
+## Flow
 
-1. Enable plan mode with `/plan` or `--plan` flag
-2. Ask the agent to analyze code and create a plan
-3. The agent should output a numbered plan under a `Plan:` header:
+1. Enable plan mode with `/plan` or the `--plan` flag.
+2. The agent explores with read-only tools.
+3. The agent calls `submit_plan_machine` with the complete PlanFSM.
+4. Choose **Execute the plan**, **Stay in plan mode**, or **Refine the plan**.
+5. During execution, the agent works only on active states and calls `plan_transition` with the exact enabled event and concrete evidence.
+6. Execution ends when the active states reach success, failure, or blocked final outcomes.
 
-```
-Plan:
-1. First step description
-2. Second step description
-3. Third step description
-```
+Each action state declares its role, abstraction level, acceptance criteria, and error policy. The policy records failure visibility, suppression permission, and observable signals. The scheduling analysis names independent branch-entry states and the dependencies that remain sequential. Parallel branches advance independently and multi-source join transitions become available when all source states are active.
 
-4. Choose "Execute the plan" when prompted
-5. During execution, the agent marks steps complete with `[DONE:n]` tags
-6. Progress widget shows completion status
+## Command Allowlist
 
-## How It Works
-
-### Plan Mode (Read-Only)
-- Built-in edit/write tools disabled
-- Other active tools remain available
-- Bash commands filtered through allowlist
-- Agent creates a plan without making changes
-
-### Execution Mode
-- Full tool access restored
-- Agent executes steps in order
-- `[DONE:n]` markers track completion
-- Widget shows progress
-
-### Command Allowlist
-
-Safe commands (allowed):
-- File inspection: `cat`, `head`, `tail`, `less`, `more`
-- Search: `grep`, `find`, `rg`, `fd`
-- Directory: `ls`, `pwd`, `tree`
-- Git read: `git status`, `git log`, `git diff`, `git branch`
-- Package info: `npm list`, `npm outdated`, `yarn info`
-- System info: `uname`, `whoami`, `date`, `uptime`
-
-Blocked commands:
-- File modification: `rm`, `mv`, `cp`, `mkdir`, `touch`
-- Git write: `git add`, `git commit`, `git push`
-- Package install: `npm install`, `yarn add`, `pip install`
-- System: `sudo`, `kill`, `reboot`
-- Editors: `vim`, `nano`, `code`
+Allowed commands cover file inspection, search, directory listing, Git reads, package information, and system information. File modification, Git writes, package installation, privilege escalation, process control, and interactive editors are blocked during plan mode.

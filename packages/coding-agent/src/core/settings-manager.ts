@@ -84,6 +84,12 @@ export interface Settings {
 	lastChangelogVersion?: string;
 	defaultProvider?: string;
 	defaultModel?: string;
+	/** Highest-priority model reference used by subagent launchers. */
+	subagentDefaultModel?: string;
+	/** Reserved default model reference for background-agent launchers. */
+	backgroundAgentDefaultModel?: string;
+	/** Named default extensions disabled through extension management. */
+	disabledDefaultExtensions?: string[];
 	defaultThinkingLevel?: ThinkingLevel;
 	transport?: TransportSetting; // default: "auto"
 	steeringMode?: "all" | "one-at-a-time";
@@ -678,6 +684,47 @@ export class SettingsManager {
 
 	getDefaultModel(): string | undefined {
 		return this.settings.defaultModel;
+	}
+
+	getSubagentDefaultModel(): string | undefined {
+		const model = this.settings.subagentDefaultModel;
+		return typeof model === "string" && model.trim() ? model.trim() : undefined;
+	}
+
+	setSubagentDefaultModel(modelReference: string | undefined): void {
+		const normalized = modelReference?.trim();
+		if (normalized) this.globalSettings.subagentDefaultModel = normalized;
+		else delete this.globalSettings.subagentDefaultModel;
+		this.markModified("subagentDefaultModel");
+		this.save();
+	}
+
+	getBackgroundAgentDefaultModel(): string | undefined {
+		const model = this.settings.backgroundAgentDefaultModel;
+		return typeof model === "string" && model.trim() ? model.trim() : undefined;
+	}
+
+	setBackgroundAgentDefaultModel(modelReference: string | undefined): void {
+		const normalized = modelReference?.trim();
+		if (normalized) this.globalSettings.backgroundAgentDefaultModel = normalized;
+		else delete this.globalSettings.backgroundAgentDefaultModel;
+		this.markModified("backgroundAgentDefaultModel");
+		this.save();
+	}
+
+	getDisabledDefaultExtensions(): string[] {
+		return [...(this.settings.disabledDefaultExtensions ?? [])];
+	}
+
+	setDefaultExtensionEnabled(name: string, enabled: boolean): void {
+		const disabled = new Set(this.globalSettings.disabledDefaultExtensions ?? []);
+		if (enabled) disabled.delete(name);
+		else disabled.add(name);
+		const values = [...disabled].sort((a, b) => a.localeCompare(b));
+		if (values.length > 0) this.globalSettings.disabledDefaultExtensions = values;
+		else delete this.globalSettings.disabledDefaultExtensions;
+		this.markModified("disabledDefaultExtensions");
+		this.save();
 	}
 
 	setDefaultProvider(provider: string): void {

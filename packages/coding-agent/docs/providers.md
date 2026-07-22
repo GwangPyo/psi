@@ -19,6 +19,7 @@ Use `/login` in interactive mode, then select a provider:
 - ChatGPT Plus/Pro (Codex)
 - Claude Pro/Max
 - GitHub Copilot
+- Google Antigravity / agy (Cloud Code Assist)
 - xAI (Grok/X subscription)
 - Radius
 
@@ -37,6 +38,15 @@ Anthropic subscription auth is active for Claude Pro/Max accounts. Third-party h
 
 - Press Enter for github.com, or enter your GitHub Enterprise Server domain
 - If you get "model not supported", enable it in VS Code: Copilot Chat → model selector → select model → "Enable"
+
+### Google Antigravity / agy
+
+- Run `/login google-gemini-cli`, then select **Sign in with Google**.
+- Browser login uses a loopback callback. Select **Authorization code (headless)** when the callback cannot reach the machine running pi.
+- The login uses Antigravity's OAuth client and scopes, then resolves the account's Cloud Code Assist project.
+- OAuth credentials, the resolved Code Assist project ID, and automatic refresh metadata are stored under the `google-gemini-cli` key in `~/.pi/agent/auth.json`.
+
+This provider is separate from the API-key-based `google` provider. It discovers the current account's model IDs through `daily-cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels` and sends the selected returned ID to the matching `v1internal:streamGenerateContent` endpoint. Model IDs are not copied from the public Gemini API catalog.
 
 ### xAI (Grok/X subscription)
 

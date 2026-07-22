@@ -9,6 +9,7 @@ import { InMemorySettingsStorage, SettingsManager } from "../src/core/settings-m
 import { ProjectTrustStore } from "../src/core/trust-manager.ts";
 import { main } from "../src/main.ts";
 import { ConfigSelectorComponent } from "../src/modes/interactive/components/config-selector.ts";
+import { initTheme } from "../src/modes/interactive/theme/theme.ts";
 import { handlePackageCommand } from "../src/package-manager-cli.ts";
 
 describe("package commands", () => {
@@ -437,6 +438,84 @@ describe("package commands", () => {
 
 		selector.getResourceList().handleInput(" ");
 		expect(settingsManager.getProjectSettings().packages).toEqual([]);
+	});
+
+	it("shows only extensions with active entries first and toggles with Enter", () => {
+		initTheme("dark", false);
+		const activeSource = "npm:z-active";
+		const inactiveSource = "npm:a-inactive";
+		const activeRoot = join(tempDir, "active-package");
+		const inactiveRoot = join(tempDir, "inactive-package");
+		const settingsManager = SettingsManager.inMemory({ packages: [activeSource, inactiveSource] });
+		const resolvedPaths: ResolvedPaths = {
+			extensions: [
+				{
+					path: join(inactiveRoot, "extensions", "inactive.ts"),
+					enabled: false,
+					metadata: {
+						source: inactiveSource,
+						scope: "user",
+						origin: "package",
+						baseDir: inactiveRoot,
+					},
+				},
+				{
+					path: join(activeRoot, "extensions", "active.ts"),
+					enabled: true,
+					metadata: {
+						source: activeSource,
+						scope: "user",
+						origin: "package",
+						baseDir: activeRoot,
+					},
+				},
+			],
+			skills: [
+				{
+					path: join(activeRoot, "skills", "hidden", "SKILL.md"),
+					enabled: true,
+					metadata: {
+						source: activeSource,
+						scope: "user",
+						origin: "package",
+						baseDir: activeRoot,
+					},
+				},
+			],
+			prompts: [],
+			themes: [],
+		};
+		const onToggle = vi.fn();
+		const selector = new ConfigSelectorComponent(
+			{ global: resolvedPaths, project: resolvedPaths },
+			settingsManager,
+			projectDir,
+			agentDir,
+			() => {},
+			() => {},
+			() => {},
+			24,
+			"global",
+			false,
+			{
+				title: "Extension Manager",
+				resourceTypes: ["extensions"],
+				enabledFirst: true,
+				onToggle,
+			},
+		);
+		const rendered = selector.render(120).join("\n");
+
+		expect(rendered.indexOf("active.ts")).toBeLessThan(rendered.indexOf("inactive.ts"));
+		expect(rendered).not.toContain("hidden");
+
+		selector.getResourceList().handleInput("\r");
+
+		expect(onToggle).toHaveBeenCalledOnce();
+		expect(settingsManager.getPackages()).toEqual([
+			{ source: activeSource, extensions: ["-extensions/active.ts"] },
+			inactiveSource,
+		]);
 	});
 
 	it("shows a friendly error for unknown install options", async () => {

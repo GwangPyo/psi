@@ -60,6 +60,8 @@ import {
 	computeCacheWaste,
 	detectCacheMiss,
 } from "../../core/cache-stats.ts";
+import { type ExtensionCatalogCandidate, NpmExtensionCatalog } from "../../core/extension-catalog.ts";
+import { type ExtensionManagementAction, ExtensionManager } from "../../core/extension-manager.ts";
 import type {
 	AutocompleteProviderFactory,
 	EditorFactory,
@@ -76,12 +78,19 @@ import { FooterDataProvider, type ReadonlyFooterDataProvider } from "../../core/
 import { configureHttpDispatcher, formatHttpIdleTimeoutMs } from "../../core/http-dispatcher.ts";
 import { type AppKeybinding, KeybindingsManager } from "../../core/keybindings.ts";
 import { createCompactionSummaryMessage } from "../../core/messages.ts";
-import { defaultModelPerProvider, findExactModelReferenceMatch, resolveModelScope } from "../../core/model-resolver.ts";
-import { DefaultPackageManager } from "../../core/package-manager.ts";
+import {
+	defaultModelPerProvider,
+	findDefaultModelForProvider,
+	findExactModelReferenceMatch,
+	resolveModelScope,
+} from "../../core/model-resolver.ts";
+import { DefaultPackageManager, type ResolvedResource } from "../../core/package-manager.ts";
+import { parseCommandArgs } from "../../core/prompt-templates.ts";
 import type { ResourceDiagnostic } from "../../core/resource-loader.ts";
 import { formatMissingSessionCwdPrompt, MissingSessionCwdError } from "../../core/session-cwd.ts";
 import { type SessionEntry, SessionManager, sessionEntryToContextMessages } from "../../core/session-manager.ts";
-import { BUILTIN_SLASH_COMMANDS } from "../../core/slash-commands.ts";
+import { SettingsManager } from "../../core/settings-manager.ts";
+import { BUILTIN_SLASH_COMMANDS, EXTENSION_BACKED_BUILTIN_SLASH_COMMANDS } from "../../core/slash-commands.ts";
 import type { SourceInfo } from "../../core/source-info.ts";
 import { isInstallTelemetryEnabled } from "../../core/telemetry.ts";
 import type { TruncationResult } from "../../core/tools/truncate.ts";
@@ -102,6 +111,7 @@ import { BashExecutionComponent } from "./components/bash-execution.ts";
 import { BorderedLoader } from "./components/bordered-loader.ts";
 import { BranchSummaryMessageComponent } from "./components/branch-summary-message.ts";
 import { CompactionSummaryMessageComponent } from "./components/compaction-summary-message.ts";
+import { setResolvedResourceEnabled } from "./components/config-selector.ts";
 import { CustomEditor } from "./components/custom-editor.ts";
 import { CustomEntryComponent } from "./components/custom-entry.ts";
 import { CustomMessageComponent } from "./components/custom-message.ts";
@@ -525,7 +535,9 @@ export class InteractiveMode {
 		const builtinNames = new Set(BUILTIN_SLASH_COMMANDS.map((command) => command.name));
 		return extensionRunner
 			.getRegisteredCommands()
-			.filter((command) => builtinNames.has(command.name))
+			.filter(
+				(command) => builtinNames.has(command.name) && !EXTENSION_BACKED_BUILTIN_SLASH_COMMANDS.has(command.name),
+			)
 			.map((command) => ({
 				type: "warning" as const,
 				message:
@@ -568,6 +580,74 @@ export class InteractiveMode {
 					label: item.id,
 					description: item.provider,
 				}));
+			};
+		}
+
+		const getAgentModelArgumentCompletions = async (prefix: string): Promise<AutocompleteItem[] | null> => {
+			const models = await this.session.modelRuntime.getAvailable();
+			const items = [
+				{ value: "status", label: "status", description: "Show the configured model" },
+				{ value: "clear", label: "clear", description: "Clear the configured model" },
+				...models.map((model) => ({
+					value: `${model.provider}/${model.id}`,
+					label: model.id,
+					description: model.provider,
+				})),
+			];
+			return createFuzzyAutocompleteItems(
+				items,
+				prefix,
+				(item) => `${item.value} ${item.label}`,
+				(item) => item,
+			);
+		};
+		for (const commandName of ["subagent-model", "background-agent-model"]) {
+			const command = slashCommands.find((candidate) => candidate.name === commandName);
+			if (command) command.getArgumentCompletions = getAgentModelArgumentCompletions;
+		}
+
+		const manageExtensionCommand = slashCommands.find((candidate) => candidate.name === "manage_extension");
+		if (manageExtensionCommand) {
+			manageExtensionCommand.getArgumentCompletions = (prefix: string): AutocompleteItem[] | null => {
+				const actions: Array<{ value: ExtensionManagementAction; description: string }> = [
+					{ value: "add", description: "Install and enable an extension package" },
+					{ value: "remove", description: "Disable and uninstall an extension package" },
+					{ value: "list", description: "List configured extension packages" },
+					{ value: "search", description: "Search configured extension packages" },
+					{ value: "status", description: "Show one extension package" },
+				];
+				const parsed = parseCommandArgs(prefix);
+				if (parsed.length <= 1 && !prefix.endsWith(" ")) {
+					return createFuzzyAutocompleteItems(
+						actions.map((action) => ({
+							value: action.value,
+							label: action.value,
+							description: action.description,
+						})),
+						prefix,
+						(item) => `${item.value} ${item.description}`,
+						(item) => item,
+					);
+				}
+
+				const action = parsed[0];
+				if (action !== "remove" && action !== "status") return null;
+				const sourcePrefix = prefix.slice(action.length).trimStart();
+				const packageManager = new DefaultPackageManager({
+					cwd: this.sessionManager.getCwd(),
+					agentDir: this.runtimeHost.services.agentDir,
+					settingsManager: this.settingsManager,
+				});
+				return createFuzzyAutocompleteItems(
+					packageManager.listConfiguredPackages().map((pkg) => ({
+						value: `${action} ${pkg.source}${pkg.scope === "project" ? " --local" : ""}`,
+						label: pkg.source,
+						description: pkg.scope,
+					})),
+					sourcePrefix,
+					(item) => `${item.label} ${item.description}`,
+					(item) => item,
+				);
 			};
 		}
 
@@ -2648,6 +2728,21 @@ export class InteractiveMode {
 				await this.handleModelCommand(searchTerm);
 				return;
 			}
+			if (text === "/subagent-model" || text.startsWith("/subagent-model ")) {
+				this.editor.setText("");
+				await this.handleDefaultAgentModelCommand(text, "subagent");
+				return;
+			}
+			if (text === "/background-agent-model" || text.startsWith("/background-agent-model ")) {
+				this.editor.setText("");
+				await this.handleDefaultAgentModelCommand(text, "background-agent");
+				return;
+			}
+			if (text === "/manage_extension" || text.startsWith("/manage_extension ")) {
+				this.editor.setText("");
+				await this.handleManageExtensionCommand(text);
+				return;
+			}
 			if (text === "/export" || text.startsWith("/export ")) {
 				await this.handleExportCommand(text);
 				this.editor.setText("");
@@ -4341,6 +4436,257 @@ export class InteractiveMode {
 		this.showModelSelector(searchTerm);
 	}
 
+	private async handleDefaultAgentModelCommand(text: string, role: "subagent" | "background-agent"): Promise<void> {
+		const command = role === "subagent" ? "/subagent-model" : "/background-agent-model";
+		const label = role === "subagent" ? "Subagent" : "Background agent";
+		const getConfiguredModel =
+			role === "subagent"
+				? () => this.settingsManager.getSubagentDefaultModel()
+				: () => this.settingsManager.getBackgroundAgentDefaultModel();
+		const setConfiguredModel =
+			role === "subagent"
+				? (modelReference: string | undefined) => this.settingsManager.setSubagentDefaultModel(modelReference)
+				: (modelReference: string | undefined) =>
+						this.settingsManager.setBackgroundAgentDefaultModel(modelReference);
+		const requested = text.slice(command.length).trim();
+		const current = getConfiguredModel();
+
+		if (requested === "status") {
+			this.showStatus(current ? `${label} default model: ${current}` : `${label} default model is not set.`);
+			return;
+		}
+
+		if (["clear", "default", "reset"].includes(requested)) {
+			setConfiguredModel(undefined);
+			await this.settingsManager.flush();
+			this.showStatus(`Cleared the ${label.toLowerCase()} default model.`);
+			return;
+		}
+
+		if (requested) {
+			setConfiguredModel(requested);
+			await this.settingsManager.flush();
+			this.showStatus(`${label} default model set to ${requested}.`);
+			return;
+		}
+
+		const clearChoice =
+			role === "subagent" ? "Use agent/global default (clear override)" : "Clear background-agent model override";
+		let modelReferences: string[];
+		try {
+			modelReferences = (await this.session.modelRuntime.getAvailable())
+				.map((model) => `${model.provider}/${model.id}`)
+				.sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+		} catch (error) {
+			this.showError(error instanceof Error ? error.message : String(error));
+			return;
+		}
+		const selected = await this.showExtensionSelector(
+			current ? `${label} default model (current: ${current})` : `${label} default model`,
+			[clearChoice, ...modelReferences],
+		);
+		if (!selected) return;
+
+		const nextModel = selected === clearChoice ? undefined : selected;
+		setConfiguredModel(nextModel);
+		await this.settingsManager.flush();
+		this.showStatus(
+			nextModel
+				? `${label} default model set to ${nextModel}.`
+				: `Cleared the ${label.toLowerCase()} default model.`,
+		);
+	}
+
+	private async handleManageExtensionCommand(text: string): Promise<void> {
+		const command = "/manage_extension";
+		const parsed = parseCommandArgs(text.slice(command.length).trim());
+		const action = parsed[0] as ExtensionManagementAction | undefined;
+		if (!action) {
+			await this.showManageExtensionSelector();
+			return;
+		}
+		if (!action || !["search", "add", "remove", "list", "status"].includes(action)) {
+			this.showWarning("Usage: /manage_extension <add|remove|list|search|status> [source or query] [--local]");
+			return;
+		}
+
+		const projectScope = parsed.includes("--local") || parsed.includes("-l");
+		const values = parsed.slice(1).filter((value) => value !== "--local" && value !== "-l");
+		const source = action === "add" || action === "remove" || action === "status" ? values.join(" ") : undefined;
+		const query = action === "search" ? values.join(" ") : undefined;
+		const manager = new ExtensionManager({
+			cwd: this.sessionManager.getCwd(),
+			agentDir: this.runtimeHost.services.agentDir,
+			settingsManager: this.settingsManager,
+			onProgress: (event) => {
+				if (event.type === "start" && event.message) this.showStatus(event.message);
+			},
+		});
+		const result = await manager.execute({
+			action,
+			source,
+			query,
+			scope:
+				action === "list" || action === "search" || action === "status"
+					? projectScope
+						? "project"
+						: "all"
+					: projectScope
+						? "project"
+						: "user",
+			requestedBy: "slash-command",
+		});
+
+		if (result.status === "failed") {
+			this.showError(result.message);
+			return;
+		}
+		this.showStatus(result.message);
+		if (result.changed && result.reloadRequired) {
+			await this.handleReloadCommand();
+		}
+	}
+
+	private createExtensionManager(): ExtensionManager {
+		return new ExtensionManager({
+			cwd: this.sessionManager.getCwd(),
+			agentDir: this.runtimeHost.services.agentDir,
+			settingsManager: this.settingsManager,
+			onProgress: (event) => {
+				if (event.type === "start" && event.message) this.showStatus(event.message);
+			},
+		});
+	}
+
+	private async addExtensionFromSource(source: string): Promise<void> {
+		const result = await this.createExtensionManager().execute({
+			action: "add",
+			source,
+			scope: "user",
+			requestedBy: "slash-command",
+		});
+		if (result.status === "failed") {
+			this.showError(result.message);
+			return;
+		}
+		this.showStatus(result.message);
+		if (result.changed && result.reloadRequired) await this.handleReloadCommand();
+	}
+
+	private getManagedExtensionDisplayName(resource: ResolvedResource): string {
+		const fileName = path.basename(resource.path);
+		const parentName = path.basename(path.dirname(resource.path));
+		return parentName === "extensions" ? fileName : `${parentName}/${fileName}`;
+	}
+
+	private async showManageExtensionSelector(): Promise<void> {
+		const cwd = this.sessionManager.getCwd();
+		const agentDir = this.runtimeHost.services.agentDir;
+		const globalSettingsManager = SettingsManager.create(cwd, agentDir, { projectTrusted: false });
+		const globalResolvedPaths = await new DefaultPackageManager({
+			cwd,
+			agentDir,
+			settingsManager: globalSettingsManager,
+		}).resolve();
+		const projectResolvedPaths = this.settingsManager.isProjectTrusted()
+			? await new DefaultPackageManager({ cwd, agentDir, settingsManager: this.settingsManager }).resolve()
+			: globalResolvedPaths;
+		const defaultExtensions = (this.session.resourceLoader.getDefaultExtensions?.() ?? [])
+			.filter((extension) => !extension.hidden)
+			.sort((left, right) => {
+				if (left.enabled !== right.enabled) return left.enabled ? -1 : 1;
+				return left.name.localeCompare(right.name);
+			});
+		const resolvedExtensions = this.settingsManager.isProjectTrusted()
+			? projectResolvedPaths.extensions
+			: globalResolvedPaths.extensions;
+		let availableCandidates: ExtensionCatalogCandidate[] = [];
+		try {
+			availableCandidates = await new NpmExtensionCatalog(this.settingsManager).search("");
+		} catch (error) {
+			this.showWarning(`Could not load known extensions: ${error instanceof Error ? error.message : String(error)}`);
+		}
+
+		const defaultByLabel = new Map<string, (typeof defaultExtensions)[number]>();
+		const managedOptions: Array<{ label: string; enabled: boolean; name: string }> = [];
+		for (const extension of defaultExtensions) {
+			const label = `${extension.enabled ? "[x]" : "[ ]"} ${extension.name} · default`;
+			defaultByLabel.set(label, extension);
+			managedOptions.push({ label, enabled: extension.enabled, name: extension.name });
+		}
+		const resourceByLabel = new Map<string, ResolvedResource>();
+		for (const resource of resolvedExtensions) {
+			const name = this.getManagedExtensionDisplayName(resource);
+			const label = `${resource.enabled ? "[x]" : "[ ]"} ${name} · ${resource.metadata.scope} · ${resource.metadata.source}`;
+			resourceByLabel.set(label, resource);
+			managedOptions.push({ label, enabled: resource.enabled, name });
+		}
+		managedOptions.sort((left, right) => {
+			if (left.enabled !== right.enabled) return left.enabled ? -1 : 1;
+			return left.name.localeCompare(right.name);
+		});
+		const configuredPackageNames = new Set(
+			new DefaultPackageManager({ cwd, agentDir, settingsManager: this.settingsManager })
+				.listConfiguredPackages()
+				.map((pkg) => {
+					const match = /^npm:(@[^/]+\/[^@]+|[^@]+)(?:@.*)?$/.exec(pkg.source);
+					return match?.[1];
+				})
+				.filter((name): name is string => name !== undefined),
+		);
+		const availableByLabel = new Map<string, ExtensionCatalogCandidate>(
+			availableCandidates
+				.filter((candidate) => !configuredPackageNames.has(candidate.name))
+				.map(
+					(candidate) =>
+						[
+							`[ ] ${candidate.name}@${candidate.version} · available${candidate.description ? ` · ${candidate.description}` : ""}`,
+							candidate,
+						] as const,
+				),
+		);
+
+		const addOption = "Add extension from source...";
+		const selected = await this.showExtensionSelector("Extension Manager · Enter toggles or installs", [
+			...managedOptions.map((option) => option.label),
+			...availableByLabel.keys(),
+			addOption,
+		]);
+		if (!selected) return;
+
+		const defaultExtension = defaultByLabel.get(selected);
+		if (defaultExtension) {
+			this.settingsManager.setDefaultExtensionEnabled(defaultExtension.name, !defaultExtension.enabled);
+			await this.settingsManager.flush();
+			await this.handleReloadCommand();
+			return;
+		}
+
+		const resource = resourceByLabel.get(selected);
+		if (resource) {
+			setResolvedResourceEnabled(this.settingsManager, cwd, agentDir, "extensions", resource, !resource.enabled);
+			await this.settingsManager.flush();
+			await this.handleReloadCommand();
+			return;
+		}
+
+		const candidate = availableByLabel.get(selected);
+		if (candidate) {
+			const confirmed = await this.showExtensionConfirm(
+				"Install extension for this user?",
+				`${candidate.source}${candidate.description ? `\n${candidate.description}` : ""}`,
+			);
+			if (confirmed) await this.addExtensionFromSource(candidate.source);
+			return;
+		}
+		if (selected === addOption) {
+			const source = (
+				await this.showExtensionInput("Add extension from source", "npm:, git:, or local path")
+			)?.trim();
+			if (source) await this.addExtensionFromSource(source);
+		}
+	}
+
 	private async findExactModelMatch(searchTerm: string): Promise<Model<any> | undefined> {
 		const models = await this.getModelCandidates();
 		return findExactModelReferenceMatch(searchTerm, models);
@@ -5078,7 +5424,11 @@ export class InteractiveMode {
 
 		let selectedModel: Model<any> | undefined;
 		let selectionError: string | undefined;
-		if (isUnknownModel(previousModel)) {
+		const previousProviderModelStillExists =
+			previousModel?.provider === providerId
+				? this.session.modelRuntime.getModel(providerId, previousModel.id) !== undefined
+				: true;
+		if (isUnknownModel(previousModel) || !previousProviderModelStillExists) {
 			const availableModels = await this.session.modelRuntime.getAvailable();
 			const providerModels = availableModels.filter((model) => model.provider === providerId);
 			if (!hasDefaultModelProvider(providerId)) {
@@ -5086,10 +5436,9 @@ export class InteractiveMode {
 			} else if (providerModels.length === 0) {
 				selectionError = `${actionLabel}, but no models are available for that provider. Use /model to select a model.`;
 			} else {
-				const defaultModelId = defaultModelPerProvider[providerId];
-				selectedModel = providerModels.find((model) => model.id === defaultModelId);
+				selectedModel = findDefaultModelForProvider(providerId, providerModels);
 				if (!selectedModel) {
-					selectionError = `${actionLabel}, but its default model "${defaultModelId}" is not available. Use /model to select a model.`;
+					selectionError = `${actionLabel}, but no default model is available. Use /model to select a model.`;
 				} else {
 					try {
 						await this.session.setModel(selectedModel);

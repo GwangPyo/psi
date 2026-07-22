@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added core extension package management through `/manage_extension` and a bundled model-facing MCP tool, including npm `pi-package` search and automatic resource reload after mutations.
+- Added highest-priority `subagentDefaultModel` settings support and a `/subagent-model` selector command to the bundled subagent extension, including trusted project-setting support.
+- Added the `backgroundAgentDefaultModel` setting and `/background-agent-model` selector for independent low-cost background work.
+- Added agy-compatible Google Antigravity login and dynamically discovered Cloud Code Assist models through the built-in `google-gemini-cli` provider.
+- Added durable per-session transcripts, accumulated debate context, and automatic main-agent handoff to the bundled adversarial conversation extension.
+- Added a modular research extension with `/collect_papers`, `/extract_papers`, and `/research_status`, project-local paper/evidence workspaces, verified batch PDF downloads, SubAgent evidence extraction, and low-cost BackgroundAgent progress hooks.
+
 ## [0.81.1] - 2026-07-21
 
 ### New Features

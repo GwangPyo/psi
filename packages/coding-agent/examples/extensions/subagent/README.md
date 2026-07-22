@@ -124,6 +124,35 @@ Use a chain: first have scout find the read tool, then have planner suggest impr
 
 ## Agent Definitions
 
+Set the model that all subagents should use in `~/.pi/agent/settings.json` or a trusted project's `.pi/settings.json`:
+
+```json
+{
+  "subagentDefaultModel": "google-gemini-cli/gemini-pro-agent"
+}
+```
+
+The model precedence is: `subagentDefaultModel`, then agent frontmatter `model`, then Pi's normal global model selection. The setting accepts the same model reference syntax as `--model`, including `provider/model`.
+
+Use `/subagent-model` to select from the currently available models. The command also supports direct and non-interactive forms:
+
+```
+/subagent-model google-gemini-cli/gemini-pro-agent
+/subagent-model status
+/subagent-model clear
+```
+
+An independent model setting is also reserved for the future background-agent role:
+
+```
+/background-agent-model
+/background-agent-model openai-codex/gpt-5.5
+/background-agent-model status
+/background-agent-model clear
+```
+
+This writes `backgroundAgentDefaultModel` but does not launch or alter background agents yet.
+
 Agents are markdown files with YAML frontmatter:
 
 ```markdown

@@ -24,6 +24,7 @@ import {
 	type ExtensionAPI,
 	getAgentDir,
 	getMarkdownTheme,
+	SettingsManager,
 	withFileMutationQueue,
 } from "@earendil-works/pi-coding-agent";
 import { Container, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
@@ -269,6 +270,7 @@ async function runSingleAgent(
 	agents: AgentConfig[],
 	agentName: string,
 	task: string,
+	subagentDefaultModel: string | undefined,
 	cwd: string | undefined,
 	step: number | undefined,
 	signal: AbortSignal | undefined,
@@ -291,8 +293,9 @@ async function runSingleAgent(
 		};
 	}
 
+	const effectiveModel = subagentDefaultModel || agent.model?.trim();
 	const args: string[] = ["--mode", "json", "-p", "--no-session"];
-	if (agent.model) args.push("--model", agent.model);
+	if (effectiveModel) args.push("--model", effectiveModel);
 	if (agent.tools && agent.tools.length > 0) args.push("--tools", agent.tools.join(","));
 
 	let tmpPromptDir: string | null = null;
@@ -306,7 +309,7 @@ async function runSingleAgent(
 		messages: [],
 		stderr: "",
 		usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 },
-		model: agent.model,
+		model: effectiveModel,
 		step,
 	};
 
@@ -457,7 +460,99 @@ const SubagentParams = Type.Object({
 	cwd: Type.Optional(Type.String({ description: "Working directory for the agent process (single mode)" })),
 });
 
+function registerDefaultModelCommand(
+	pi: ExtensionAPI,
+	options: {
+		command: string;
+		label: string;
+		description: string;
+		clearChoice: string;
+		unsetMessage: string;
+		get: (settingsManager: SettingsManager) => string | undefined;
+		set: (settingsManager: SettingsManager, modelReference: string | undefined) => void;
+	},
+): void {
+	pi.registerCommand(options.command, {
+		description: options.description,
+		handler: async (args, ctx) => {
+			const settingsManager = SettingsManager.create(ctx.cwd, getAgentDir(), {
+				projectTrusted: ctx.isProjectTrusted(),
+			});
+			const requested = args.trim();
+			const current = options.get(settingsManager);
+
+			if (requested === "status") {
+				ctx.ui.notify(current ? `${options.label} default model: ${current}` : options.unsetMessage, "info");
+				return;
+			}
+
+			if (["clear", "default", "reset"].includes(requested)) {
+				options.set(settingsManager, undefined);
+				await settingsManager.flush();
+				ctx.ui.notify(`Cleared the ${options.label.toLowerCase()} default model.`, "info");
+				return;
+			}
+
+			if (requested) {
+				options.set(settingsManager, requested);
+				await settingsManager.flush();
+				ctx.ui.notify(`${options.label} default model set to ${requested}.`, "info");
+				return;
+			}
+
+			if (ctx.mode !== "tui") {
+				ctx.ui.notify(
+					`Usage: /${options.command} <provider/model>, /${options.command} status, or /${options.command} clear`,
+					"info",
+				);
+				return;
+			}
+
+			const modelReferences = ctx.modelRegistry
+				.getAvailable()
+				.map((model) => `${model.provider}/${model.id}`)
+				.sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+			const choices = [options.clearChoice, ...modelReferences];
+			const selected = await ctx.ui.select(
+				current ? `${options.label} default model (current: ${current})` : `${options.label} default model`,
+				choices,
+			);
+			if (!selected) return;
+
+			const nextModel = selected === options.clearChoice ? undefined : selected;
+			options.set(settingsManager, nextModel);
+			await settingsManager.flush();
+			ctx.ui.notify(
+				nextModel
+					? `${options.label} default model set to ${nextModel}.`
+					: `Cleared the ${options.label.toLowerCase()} default model.`,
+				"info",
+			);
+		},
+	});
+}
+
 export default function (pi: ExtensionAPI) {
+	registerDefaultModelCommand(pi, {
+		command: "subagent-model",
+		label: "Subagent",
+		description: "Select the default model used by subagents",
+		clearChoice: "Use agent/global default (clear override)",
+		unsetMessage: "Subagent default model is not set; agent frontmatter and the global model are used.",
+		get: (settingsManager) => settingsManager.getSubagentDefaultModel(),
+		set: (settingsManager, modelReference) => settingsManager.setSubagentDefaultModel(modelReference),
+	});
+
+	registerDefaultModelCommand(pi, {
+		command: "background-agent-model",
+		label: "Background agent",
+		description: "Select the reserved default model for background agents",
+		clearChoice: "Clear background-agent model override",
+		unsetMessage: "Background agent default model is not set.",
+		get: (settingsManager) => settingsManager.getBackgroundAgentDefaultModel(),
+		set: (settingsManager, modelReference) => settingsManager.setBackgroundAgentDefaultModel(modelReference),
+	});
+
 	pi.registerTool({
 		name: "subagent",
 		label: "Subagent",
@@ -474,6 +569,10 @@ export default function (pi: ExtensionAPI) {
 			const discovery = discoverAgents(ctx.cwd, agentScope);
 			const agents = discovery.agents;
 			const confirmProjectAgents = params.confirmProjectAgents ?? true;
+			const settingsManager = SettingsManager.create(ctx.cwd, getAgentDir(), {
+				projectTrusted: ctx.isProjectTrusted(),
+			});
+			const subagentDefaultModel = settingsManager.getSubagentDefaultModel();
 
 			const hasChain = (params.chain?.length ?? 0) > 0;
 			const hasTasks = (params.tasks?.length ?? 0) > 0;
@@ -555,6 +654,7 @@ export default function (pi: ExtensionAPI) {
 						agents,
 						step.agent,
 						taskWithContext,
+						subagentDefaultModel,
 						step.cwd,
 						i + 1,
 						signal,
@@ -627,6 +727,7 @@ export default function (pi: ExtensionAPI) {
 						agents,
 						t.agent,
 						t.task,
+						subagentDefaultModel,
 						t.cwd,
 						undefined,
 						signal,
@@ -669,6 +770,7 @@ export default function (pi: ExtensionAPI) {
 					agents,
 					params.agent,
 					params.task,
+					subagentDefaultModel,
 					params.cwd,
 					undefined,
 					signal,

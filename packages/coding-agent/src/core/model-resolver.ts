@@ -22,6 +22,8 @@ export const defaultModelPerProvider: Record<KnownProvider, string> = {
 	nvidia: "nvidia/nemotron-3-super-120b-a12b",
 	deepseek: "deepseek-v4-pro",
 	google: "gemini-3.1-pro-preview",
+	// Account-specific Cloud Code Assist models are discovered at runtime.
+	"google-gemini-cli": "",
 	"google-vertex": "gemini-3.1-pro-preview",
 	"github-copilot": "gpt-5.4",
 	openrouter: "moonshotai/kimi-k2.6",
@@ -51,6 +53,30 @@ export const defaultModelPerProvider: Record<KnownProvider, string> = {
 	"xiaomi-token-plan-ams": "mimo-v2.5-pro",
 	"xiaomi-token-plan-sgp": "mimo-v2.5-pro",
 };
+
+/** Resolve a provider's preferred model from its current (possibly dynamic) catalog. */
+export function findDefaultModelForProvider(provider: string, models: readonly Model<Api>[]): Model<Api> | undefined {
+	const providerModels = models.filter((model) => model.provider === provider);
+	if (providerModels.length === 0) return undefined;
+
+	if (provider === "google-gemini-cli") {
+		const proModels = providerModels.filter((model) =>
+			/gemini\s*-?\s*\d+(?:\.\d+)*\s*-?\s*pro/i.test(`${model.id} ${model.name}`),
+		);
+		return (
+			proModels.sort((a, b) => {
+				const aText = `${a.id} ${a.name}`.toLowerCase();
+				const bText = `${b.id} ${b.name}`.toLowerCase();
+				const highPreference = Number(bText.includes("high")) - Number(aText.includes("high"));
+				const previewPreference = Number(aText.includes("preview")) - Number(bText.includes("preview"));
+				return highPreference || previewPreference || bText.localeCompare(aText, undefined, { numeric: true });
+			})[0] ?? providerModels[0]
+		);
+	}
+
+	const defaultId = defaultModelPerProvider[provider as KnownProvider];
+	return providerModels.find((model) => model.id === defaultId);
+}
 
 export interface ScopedModel {
 	model: Model<Api>;
@@ -167,10 +193,7 @@ function buildFallbackModel(provider: string, modelId: string, availableModels: 
 	const providerModels = availableModels.filter((m) => m.provider === provider);
 	if (providerModels.length === 0) return undefined;
 
-	const defaultId = defaultModelPerProvider[provider as KnownProvider];
-	const baseModel = defaultId
-		? (providerModels.find((m) => m.id === defaultId) ?? providerModels[0])
-		: providerModels[0];
+	const baseModel = findDefaultModelForProvider(provider, providerModels) ?? providerModels[0];
 
 	return {
 		...baseModel,
@@ -609,6 +632,15 @@ export async function findInitialModel(options: {
 			}
 			return { model, thinkingLevel, fallbackMessage: undefined };
 		}
+
+		const providerDefault = findDefaultModelForProvider(defaultProvider, await modelRuntime.getAvailable());
+		if (providerDefault && modelRuntime.hasConfiguredAuth(providerDefault.provider)) {
+			return {
+				model: providerDefault,
+				thinkingLevel: defaultThinkingLevel ?? DEFAULT_THINKING_LEVEL,
+				fallbackMessage: `Configured model "${defaultProvider}/${defaultModelId}" is unavailable; using "${defaultProvider}/${providerDefault.id}" from the current provider catalog.`,
+			};
+		}
 	}
 
 	// 4. Try first available model with valid API key
@@ -617,8 +649,7 @@ export async function findInitialModel(options: {
 	if (availableModels.length > 0) {
 		// Try to find a default model from known providers
 		for (const provider of Object.keys(defaultModelPerProvider) as KnownProvider[]) {
-			const defaultId = defaultModelPerProvider[provider];
-			const match = availableModels.find((m) => m.provider === provider && m.id === defaultId);
+			const match = findDefaultModelForProvider(provider, availableModels);
 			if (match) {
 				return { model: match, thinkingLevel: DEFAULT_THINKING_LEVEL, fallbackMessage: undefined };
 			}
@@ -679,8 +710,7 @@ export async function restoreModelFromSession(
 		// Try to find a default model from known providers
 		let fallbackModel: Model<Api> | undefined;
 		for (const provider of Object.keys(defaultModelPerProvider) as KnownProvider[]) {
-			const defaultId = defaultModelPerProvider[provider];
-			const match = availableModels.find((m) => m.provider === provider && m.id === defaultId);
+			const match = findDefaultModelForProvider(provider, availableModels);
 			if (match) {
 				fallbackModel = match;
 				break;

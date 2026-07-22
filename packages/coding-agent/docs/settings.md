@@ -29,10 +29,25 @@ Use `/trust` in interactive mode to save a project trust decision for future ses
 |---------|------|---------|-------------|
 | `defaultProvider` | string | - | Default provider (e.g., `"anthropic"`, `"openai"`) |
 | `defaultModel` | string | - | Default model ID |
+| `subagentDefaultModel` | string | - | Highest-priority model reference for subagent launchers (supports `provider/model`) |
+| `backgroundAgentDefaultModel` | string | - | Preferred model reference for background-agent launchers such as PDF research |
 | `defaultThinkingLevel` | string | - | `"off"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"`, `"max"` |
 | `hideThinkingBlock` | boolean | `false` | Hide thinking blocks in output |
 | `showCacheMissNotices` | boolean | `false` | Show transcript notices for significant prompt-cache misses |
 | `thinkingBudgets` | object | - | Custom token budgets per thinking level |
+
+The bundled subagent extension gives `subagentDefaultModel` priority over each agent's frontmatter `model`. It supports the same model reference syntax as `--model`. Project-local `.pi/settings.json` values are used only when the project is trusted. Run `/subagent-model` to select an available model, `/subagent-model status` to inspect the override, or `/subagent-model clear` to remove it.
+
+The bundled research extension uses `subagentDefaultModel` for substantive PDF reading and evidence extraction; it must support image input for damaged-page recovery. If unset, the current main model is used when it supports images. `backgroundAgentDefaultModel` is used only to turn live SubAgent focus events into short progress text and may be a low-cost text-only model. If unset, the lowest-cost available model is selected. Use `/subagent-model` and `/background-agent-model` to manage the two roles independently.
+
+```json
+{
+  "defaultProvider": "openai-codex",
+  "defaultModel": "gpt-5.5",
+  "subagentDefaultModel": "google-gemini-cli/gemini-pro-agent",
+  "backgroundAgentDefaultModel": "openai-codex/gpt-5.5"
+}
+```
 
 #### thinkingBudgets
 

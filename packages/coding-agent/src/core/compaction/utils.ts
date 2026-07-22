@@ -88,6 +88,25 @@ export function formatFileOperations(readFiles: string[], modifiedFiles: string[
 /** Maximum characters for a tool result in serialized summaries. */
 const TOOL_RESULT_MAX_CHARS = 2000;
 
+/** Standalone success acknowledgements that do not add useful summarization context. */
+const TOOL_RESULT_NOISE_PATTERNS = [
+	/^\s*(?:ok|success(?:ful(?:ly)?)?|done|completed)[.!\s✓✔]*$/iu,
+	/^\s*(?:command|operation|request|task|tool)\s+(?:completed|finished|succeeded)(?:\s+successfully)?[.!\s]*$/iu,
+	/^\s*(?:process|command)\s+(?:exited|finished|completed)\s+with\s+(?:exit\s+)?code\s+0[.!\s]*$/iu,
+	/^\s*(?:exit(?:\s+code)?|status)\s*[:=]\s*0[.!\s]*$/iu,
+	/^\s*successfully\s+(?:replaced|wrote|saved|created|updated|deleted|removed|moved|copied|renamed|applied)\b.*$/iu,
+	/^\s*(?:file|directory|patch|changes?)\b.*\b(?:created|written|saved|updated|deleted|removed|applied)\s+successfully[.!\s]*$/iu,
+];
+
+function filterToolResultNoise(text: string): string {
+	return text
+		.split(/\r?\n/)
+		.filter((line) => !TOOL_RESULT_NOISE_PATTERNS.some((pattern) => pattern.test(line)))
+		.join("\n")
+		.replace(/\n{3,}/g, "\n\n")
+		.trim();
+}
+
 /**
  * Truncate text to a maximum character length for summarization.
  * Keeps the beginning and appends a truncation marker.
@@ -140,8 +159,9 @@ export function serializeConversation(messages: Message[]): string {
 			}
 		} else if (msg.role === "toolResult") {
 			const content = contentText(msg.content, "");
-			if (content) {
-				parts.push(`[Tool result]: ${truncateForSummary(content, TOOL_RESULT_MAX_CHARS)}`);
+			const filteredContent = msg.isError ? content : filterToolResultNoise(content);
+			if (filteredContent) {
+				parts.push(`[Tool result]: ${truncateForSummary(filteredContent, TOOL_RESULT_MAX_CHARS)}`);
 			}
 		}
 	}
