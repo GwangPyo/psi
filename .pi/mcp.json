@@ -4,31 +4,15 @@
     "requestTimeoutMs": 120000
   },
   "mcpServers": {
-    "project_graph": {
-      "command": "python3",
-      "args": [
-        "-m",
-        "project_graphrag.mcp_server"
-      ],
-      "env": {
-        "PYTHONPATH": "/home/yoo/supergravity",
-        "PROJECT_GRAPHRAG_DATA_ROOT": "/home/yoo/supergravity/.project-graphrag-data"
-      },
-      "lifecycle": "lazy",
-      "requestTimeoutMs": 120000,
-      "directTools": true
-    },
     "web": {
       "command": "npx",
       "args": [
         "-y",
         "@playwright/mcp@0.0.78",
         "--headless",
-        "--executable-path",
-        "/home/yoo/.cache/ms-playwright/chromium-1232/chrome-linux64/chrome",
         "--isolated",
         "--output-dir",
-        "/home/yoo/supergravity/pi/.pi/research-output"
+        ".pi/research-output"
       ],
       "lifecycle": "eager",
       "requestTimeoutMs": 120000

@@ -6,7 +6,7 @@
  */
 
 import { Key } from "@earendil-works/pi-tui";
-import { type Static, Type } from "typebox";
+import { Type } from "typebox";
 import type { ExtensionAPI, ExtensionContext } from "../../core/extensions/types.ts";
 import { type AnimatedStatus, startAnimatedStatus } from "../animated-status.ts";
 import {
@@ -15,24 +15,28 @@ import {
 	formatPlanMachine,
 	formatPlanRuntime,
 	formatPlanWidget,
+	popupPlanGraph,
 	PlanFSM,
 	type PlanMachineDefinition,
-	PlanParallelismSchema,
 	type PlanRuntimeSnapshot,
-	PlanScalarSchema,
-	PlanStateSchema,
 	type PlanTransition,
-	PlanTransitionSchema,
 } from "./fsm/index.ts";
+import {
+	applyPlanGuideCommand,
+	createPlanGuideDraft,
+	formatPlanGuideStatus,
+	PlanGuideCommandSchema,
+	type PlanGuideDraft,
+} from "./guide.ts";
 import { isSafeCommand } from "./utils.ts";
 
-const SUBMIT_PLAN_TOOL = "submit_plan_machine";
+const GUIDE_PLAN_TOOL = "guide_plan";
 const TRANSITION_PLAN_TOOL = "plan_transition";
 const PLAN_DRAFTING_WIDGET = "plan-drafting";
-const PLAN_MODE_TOOLS = ["read", "bash", "grep", "find", "ls", "questionnaire", SUBMIT_PLAN_TOOL];
+const PLAN_MODE_TOOLS = ["read", "bash", "grep", "find", "ls", "questionnaire", GUIDE_PLAN_TOOL];
 const NORMAL_MODE_TOOLS = ["read", "bash", "edit", "write"];
 const PLAN_MODE_DISABLED_TOOLS = new Set<string>(["edit", "write", TRANSITION_PLAN_TOOL]);
-const PLAN_CONTROL_TOOLS = new Set<string>([SUBMIT_PLAN_TOOL, TRANSITION_PLAN_TOOL]);
+const PLAN_CONTROL_TOOLS = new Set<string>([GUIDE_PLAN_TOOL, TRANSITION_PLAN_TOOL]);
 const PLAN_MANAGED_TOOLS = new Set<string>([...PLAN_MODE_TOOLS, ...NORMAL_MODE_TOOLS, ...PLAN_CONTROL_TOOLS]);
 
 const PlanTransitionParameters = Type.Object({
@@ -43,131 +47,21 @@ const PlanTransitionParameters = Type.Object({
 			description: "Active source state to advance; omit to dispatch all matching branches",
 		}),
 	),
-	evidence: Type.String({
-		minLength: 1,
-		description: "Concrete evidence that the source state's acceptance criteria or control condition is satisfied",
-	}),
-});
-
-const ErrorSuppressionSchema = Type.Union([
-	Type.Literal("forbid"),
-	Type.Literal("explicit-only"),
-	Type.Literal("allow"),
-]);
-
-const PlanMachineDraftSchema = Type.Object({
-	version: Type.Optional(Type.Literal(1)),
-	id: Type.Optional(Type.String({ minLength: 1, description: "Stable identifier for this plan" })),
-	goal: Type.Optional(Type.String({ minLength: 1, description: "The complete user goal this plan must achieve" })),
-	initialStateId: Type.Optional(Type.String({ minLength: 1, description: "State activated when execution begins" })),
-	parallelism: Type.Optional(PlanParallelismSchema),
-	context: Type.Optional(
-		Type.Object({
-			variables: Type.Optional(
-				Type.Record(Type.String(), PlanScalarSchema, { description: "Initial scalar runtime variables" }),
-			),
-			errorSuppression: Type.Optional(ErrorSuppressionSchema),
-		}),
-	),
-	errorSuppression: Type.Optional(
-		Type.Unsafe<"forbid" | "explicit-only" | "allow">({
-			...ErrorSuppressionSchema,
-			description: "Accepted top-level alias for context.errorSuppression",
-		}),
-	),
-	states: Type.Optional(Type.Array(PlanStateSchema, { minItems: 1, description: "Complete set of PlanFSM states" })),
-	transitions: Type.Optional(
-		Type.Array(PlanTransitionSchema, { description: "Complete set of guarded PlanFSM transitions" }),
-	),
-	limits: Type.Optional(
-		Type.Object({
-			maxTransitions: Type.Optional(Type.Integer({ minimum: 1 })),
-			defaultMaxVisitsPerState: Type.Optional(Type.Integer({ minimum: 1 })),
+	rationale: Type.Optional(
+		Type.String({
+			minLength: 1,
+			description: "Optional reasoning or rationale for this transition (e.g., 'tests passed', 'user confirmed')",
 		}),
 	),
 });
-
-type PlanMachineDraft = Static<typeof PlanMachineDraftSchema>;
-
-function mergePlanMachineDraft(current: PlanMachineDraft, update: PlanMachineDraft): PlanMachineDraft {
-	return {
-		...current,
-		...update,
-		context:
-			current.context || update.context
-				? {
-						...current.context,
-						...update.context,
-						variables: {
-							...current.context?.variables,
-							...update.context?.variables,
-						},
-					}
-				: undefined,
-		limits:
-			current.limits || update.limits
-				? {
-						...current.limits,
-						...update.limits,
-					}
-				: undefined,
-	};
-}
-
-function materializePlanMachineDraft(draft: PlanMachineDraft): {
-	machine?: PlanMachineDefinition;
-	missing: string[];
-} {
-	const { goal, id, initialStateId, parallelism, states, transitions } = draft;
-	const missing: string[] = [];
-	if (!id) missing.push("id");
-	if (!goal) missing.push("goal");
-	if (!initialStateId) missing.push("initialStateId");
-	if (!parallelism) missing.push("parallelism");
-	if (!states) missing.push("states");
-	if (!transitions) missing.push("transitions");
-	if (missing.length > 0 || !id || !goal || !initialStateId || !parallelism || !states || !transitions) {
-		return { missing };
-	}
-
-	return {
-		missing,
-		machine: {
-			version: 1,
-			id,
-			goal,
-			initialStateId,
-			parallelism,
-			context: {
-				variables: draft.context?.variables ?? {},
-				errorSuppression: draft.context?.errorSuppression ?? draft.errorSuppression ?? "forbid",
-			},
-			states,
-			transitions,
-			limits: {
-				maxTransitions: draft.limits?.maxTransitions ?? Math.max(30, states.length * 4),
-				defaultMaxVisitsPerState: draft.limits?.defaultMaxVisitsPerState ?? 3,
-			},
-		},
-	};
-}
-
-function formatPlanMachineDraftStatus(draft: PlanMachineDraft): string {
-	const supplied = Object.keys(draft);
-	if (supplied.length === 0) return "No PlanFSM draft fields have been submitted yet.";
-	const { missing } = materializePlanMachineDraft(draft);
-	return [
-		`Stored draft fields: ${supplied.join(", ")}.`,
-		missing.length > 0 ? `Still required: ${missing.join(", ")}.` : "All required top-level fields are present.",
-	].join(" ");
-}
 
 interface PlanModeState {
 	enabled: boolean;
 	executing: boolean;
+	grillBeforePlanning?: boolean;
 	machine?: PlanMachineDefinition;
 	snapshot?: PlanRuntimeSnapshot;
-	draft?: PlanMachineDraft;
+	draft?: PlanGuideDraft;
 	toolsBeforePlanMode?: string[];
 }
 
@@ -191,13 +85,18 @@ function getEnabledTransitions(fsm: PlanFSM): PlanTransition[] {
 export default function planModeExtension(pi: ExtensionAPI): void {
 	let planModeEnabled = false;
 	let executionMode = false;
+	let grillBeforePlanning = false;
 	let machineDefinition: PlanMachineDefinition | undefined;
 	let runtimeSnapshot: PlanRuntimeSnapshot | undefined;
-	let machineDraft: PlanMachineDraft = {};
+	let planGuideDraft = createPlanGuideDraft();
 	let toolsBeforePlanMode: string[] | undefined;
 	let planSubmittedThisRun = false;
 	let planAgentRunning = false;
 	let draftingStatus: AnimatedStatus | undefined;
+	let executionKickoffPending = false;
+	let executionContinuationPending = false;
+	let executionRunTransitionCount: number | undefined;
+	let noProgressRuns = 0;
 
 	function stopDraftingStatus(): void {
 		draftingStatus?.stop();
@@ -272,6 +171,9 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 	function enableExecutionTools(): void {
 		const baseTools = toolsBeforePlanMode ?? withoutPlanControlTools(pi.getActiveTools());
 		pi.setActiveTools(uniqueToolNames([...getNormalModeTools(baseTools), TRANSITION_PLAN_TOOL]));
+		if (!pi.getActiveTools().includes(TRANSITION_PLAN_TOOL)) {
+			throw new Error(`Cannot enter plan execution because required tool "${TRANSITION_PLAN_TOOL}" is unavailable.`);
+		}
 	}
 
 	function restoreNormalModeTools(): void {
@@ -283,9 +185,10 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		pi.appendEntry<PlanModeState>("plan-mode", {
 			enabled: planModeEnabled,
 			executing: executionMode,
+			grillBeforePlanning,
 			machine: machineDefinition,
 			snapshot: runtimeSnapshot,
-			draft: machineDraft,
+			draft: planGuideDraft,
 			toolsBeforePlanMode,
 		});
 	}
@@ -294,24 +197,32 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		stopDraftingStatus();
 		machineDefinition = undefined;
 		runtimeSnapshot = undefined;
-		machineDraft = {};
+		planGuideDraft = createPlanGuideDraft();
 		planSubmittedThisRun = false;
 		planAgentRunning = false;
+		executionKickoffPending = false;
+		executionContinuationPending = false;
+		executionRunTransitionCount = undefined;
+		noProgressRuns = 0;
 	}
 
-	function togglePlanMode(ctx: ExtensionContext): void {
+	async function togglePlanMode(ctx: ExtensionContext): Promise<void> {
 		if (planModeEnabled) {
 			planModeEnabled = false;
 			executionMode = false;
+			grillBeforePlanning = false;
 			clearPlan();
 			restoreNormalModeTools();
 			ctx.ui.notify("Plan mode disabled. Full access restored.");
 		} else {
+			grillBeforePlanning = ctx.hasUI
+				? await ctx.ui.confirm("Grill you?", "Inspect the implementation before making the plan.")
+				: false;
 			planModeEnabled = true;
 			executionMode = false;
 			clearPlan();
 			enablePlanModeTools();
-			ctx.ui.notify("Plan mode enabled. Submit a PlanFSM before execution.");
+			ctx.ui.notify("Plan mode enabled. Build a topology guide before execution.");
 		}
 		updateStatus(ctx);
 		persistState();
@@ -333,6 +244,44 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		);
 	}
 
+	function blockExecution(ctx: ExtensionContext, reason: string): void {
+		if (!runtimeSnapshot) return;
+		runtimeSnapshot = {
+			...runtimeSnapshot,
+			status: "blocked",
+			blockReason: reason,
+			history: [
+				...runtimeSnapshot.history,
+				{
+					event: "HARNESS_BLOCKED",
+					evidence: reason,
+					transitionIds: [],
+					activeStateIdsBefore: [...runtimeSnapshot.activeStateIds],
+					activeStateIdsAfter: [...runtimeSnapshot.activeStateIds],
+					timestamp: Date.now(),
+				},
+			],
+		};
+		finishExecution(ctx);
+	}
+
+	function executionContext(): string {
+		if (!machineDefinition || !runtimeSnapshot) return "No executable PlanFSM is loaded.";
+		const fsm = new PlanFSM(machineDefinition, runtimeSnapshot);
+		return `[EXECUTING PLAN FSM - Full tool access enabled]
+${formatPlanRuntime(machineDefinition, runtimeSnapshot)}
+
+Active state contracts:
+${formatActiveStateInstructions(machineDefinition, runtimeSnapshot)}
+
+Enabled transitions:
+${formatEnabledTransitions(getEnabledTransitions(fsm))}
+
+Treat every active action as a required postcondition. Inspect the current workspace, establish any missing outcome, verify every acceptance criterion, and call ${TRANSITION_PLAN_TOOL}.
+Parallel active states are one ready frontier: advance any state without waiting for unrelated states. Structural AUTO transitions are settled by the runtime.
+An execution run may end only after dispatching a transition, reaching a terminal state, or reporting a concrete externally blocked condition. Never wait for another system instruction while the PlanFSM is running.`;
+	}
+
 	pi.registerFlag("plan", {
 		description: "Start in PlanFSM mode (read-only exploration)",
 		type: "boolean",
@@ -340,44 +289,53 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.registerTool({
-		name: SUBMIT_PLAN_TOOL,
-		label: "Submit PlanFSM",
+		name: GUIDE_PLAN_TOOL,
+		label: "Guide Plan Topology",
 		description:
-			"Build and submit the finite-state-machine plan after read-only exploration. Partial calls are accumulated, missing fields are reported, and the completed machine is validated for references, reachability, forks, joins, bounded loops, and error-suppression policy.",
-		promptSnippet: "Submit a validated nonlinear PlanFSM while plan mode is active",
+			"Incrementally construct a nonlinear plan by adding sequence, parallel, choice, revision, and final topology. The server retains the graph and compiles it to a validated PlanFSM only on finalize.",
+		promptSnippet: "Expand the retained plan frontier with explicit topology operations",
 		promptGuidelines: [
-			"In plan mode, call submit_plan_machine until it reports that the PlanFSM was accepted; partial calls are retained.",
-			"Analyze dependencies before ordering states. Put every independent branch-entry set in parallelism.independentStateGroups and activate each set with a multi-target fork transition.",
-			"Use sequential strategy only when the rationale names the concrete dependency that forces every action to wait.",
-			"Represent revision and retry paths with bounded loops.",
+			"Start once, then grow the open frontier with add_sequence, add_parallel, add_choice, connect, update_state, and add_final operations.",
+			"Use add_sequence to define macro subgoals and their concrete dependencies (producer-consumer, verification, etc).",
+			"Use add_parallel whenever sibling subgoals do not consume one another's artifacts or decisions.",
+			"Use connect to create backward loops (e.g., from a verification state back to an implementation state) to handle failures and revisions robustly.",
+			"Do not serialize the complete PlanFSM. Finalize only after every open frontier has a final, convergence, or revision path.",
 		],
-		parameters: PlanMachineDraftSchema,
+		parameters: PlanGuideCommandSchema,
 		executionMode: "sequential",
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-			if (!planModeEnabled) throw new Error("submit_plan_machine is only available while plan mode is active.");
-			machineDraft = mergePlanMachineDraft(machineDraft, params);
-			const materialized = materializePlanMachineDraft(machineDraft);
-			if (!materialized.machine) {
+			if (!planModeEnabled) throw new Error("guide_plan is only available while plan mode is active.");
+			const result = applyPlanGuideCommand(planGuideDraft, params);
+			planGuideDraft = result.draft;
+			if (params.operation === "finalize" && result.errors.length > 0) {
 				persistState();
 				return {
 					content: [
 						{
 							type: "text",
-							text: `PlanFSM draft saved. Missing required fields: ${materialized.missing.join(", ")}. Call submit_plan_machine again with the missing fields; previously supplied fields are retained.`,
+							text: `Plan guide is not executable:\n${result.errors.map((error) => `- ${error}`).join("\n")}\n\n${formatPlanGuideStatus(planGuideDraft)}`,
 						},
 					],
-					details: { accepted: false, missing: materialized.missing, draft: machineDraft },
+					details: { accepted: false, errors: result.errors, status: result.status },
 				};
 			}
-
-			const fsm = new PlanFSM(materialized.machine);
-			machineDefinition = fsm.machine;
-			runtimeSnapshot = fsm.snapshot;
-			planSubmittedThisRun = true;
+			if (result.machine) {
+				const fsm = new PlanFSM(result.machine);
+				machineDefinition = fsm.machine;
+				runtimeSnapshot = fsm.snapshot;
+				planSubmittedThisRun = true;
+			}
 			updateStatus(ctx);
 			persistState();
+			if (!result.machine) {
+				return {
+					content: [{ type: "text", text: formatPlanGuideStatus(planGuideDraft) }],
+					details: { accepted: false, status: result.status },
+				};
+			}
+			popupPlanGraph(machineDefinition!).catch(() => {});
 			return {
-				content: [{ type: "text", text: `PlanFSM accepted.\n\n${formatPlanMachine(machineDefinition)}` }],
+				content: [{ type: "text", text: `PlanFSM accepted.\n\n${formatPlanMachine(machineDefinition!)}` }],
 				details: { machine: machineDefinition, snapshot: runtimeSnapshot },
 			};
 		},
@@ -387,11 +345,11 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		name: TRANSITION_PLAN_TOOL,
 		label: "Advance PlanFSM",
 		description:
-			"Advance the executing PlanFSM through an enabled transition. Use the exact event and optional source state shown in the execution context, with concrete acceptance evidence.",
-		promptSnippet: "Advance active PlanFSM states with explicit events and evidence",
+			"Advance the executing PlanFSM through an enabled transition. Use the exact event and optional source state shown in the execution context.",
+		promptSnippet: "Advance active PlanFSM states with explicit events",
 		promptGuidelines: [
 			"During plan execution, call plan_transition after satisfying an active state's acceptance criteria.",
-			"Use FAILURE, retry, or fallback transitions when criteria are not met; never report success without evidence.",
+			"Use FAILURE, retry, or fallback transitions when criteria are not met.",
 		],
 		parameters: PlanTransitionParameters,
 		executionMode: "sequential",
@@ -404,7 +362,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 			const enabledBefore = getEnabledTransitions(fsm);
 			const result = fsm.dispatch(params.event, {
 				sourceStateId: params.sourceStateId,
-				evidence: params.evidence,
+				evidence: params.rationale,
 			});
 			if (result.appliedTransitionIds.length === 0 && result.snapshot.status === "running") {
 				throw new Error(
@@ -424,7 +382,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 				content: [{ type: "text", text: responseText }],
 				details: {
 					appliedTransitionIds: result.appliedTransitionIds,
-					evidence: params.evidence,
+					evidence: params.rationale,
 					snapshot: runtimeSnapshot,
 				},
 			};
@@ -433,7 +391,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 
 	pi.registerCommand("plan", {
 		description: "Toggle PlanFSM mode (read-only exploration)",
-		handler: async (_args, ctx) => togglePlanMode(ctx),
+		handler: async (_args, ctx) => await togglePlanMode(ctx),
 	});
 
 	pi.registerCommand("todos", {
@@ -443,6 +401,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 				ctx.ui.notify("No PlanFSM. Create one with /plan.", "info");
 				return;
 			}
+			popupPlanGraph(machineDefinition!).catch(() => {});
 			ctx.ui.notify(
 				`${formatPlanRuntime(machineDefinition, runtimeSnapshot)}\n\n${formatPlanMachine(machineDefinition)}`,
 				"info",
@@ -452,7 +411,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 
 	pi.registerShortcut(Key.ctrlAlt("p"), {
 		description: "Toggle PlanFSM mode",
-		handler: async (ctx) => togglePlanMode(ctx),
+		handler: async (ctx) => await togglePlanMode(ctx),
 	});
 
 	pi.on("tool_call", async (event) => {
@@ -483,18 +442,29 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 				message: {
 					customType: "plan-mode-context",
 					content: `[PLAN MODE ACTIVE]
-You are constructing an executable PlanFSM, not writing a prose todo list. Explore with read-only tools and call ${SUBMIT_PLAN_TOOL} until it reports "PlanFSM accepted."
+Build an executable nonlinear guide with ${GUIDE_PLAN_TOOL}. The guide is retained server-side; never serialize a complete PlanFSM.
 
-Current submission state:
-${formatPlanMachineDraftStatus(machineDraft)}
+Current guide:
+${formatPlanGuideStatus(planGuideDraft)}
 
 Planning procedure:
-1. Establish the goal and evidence boundary.
+${
+	grillBeforePlanning
+		? `0. Inspect and grill the user before committing topology.
+   - First, resolve repository facts with read-only tools.
+   - Second, you MUST use the questionnaire tool to grill the user and clarify any unresolved requirements or design decisions BEFORE proceeding with the plan topology.
+   - CRITICAL: When using the questionnaire tool, you MUST ask exactly ONE question at a time (pass only one item in the questions array). Wait for the user's response before asking the next question.
+   - Represent unresolved material decisions with add_choice.
+   - Continue expanding every independent frontier that does not depend on the unresolved choice.
+
+`
+		: ""
+}1. Establish the goal and boundaries.
    - Restate the complete user outcome in goal without shrinking its scope.
-   - Identify repository rules, user constraints, named deliverables, tests, runtime behavior, and evidence required to prove completion.
+   - Identify repository rules, user constraints, named deliverables, tests, and runtime behavior required to prove completion.
    - Resolve important unknowns through read-only inspection. Ask the user only when a choice materially changes the result and cannot be discovered.
 
-2. Inspect the existing system before proposing implementation.
+2. Draft the topology with ${GUIDE_PLAN_TOOL}.system before proposing implementation.
    - Locate relevant entry points, data flow, public contracts, tests, configuration, and error handling.
    - Search for existing functions, libraries, helpers, and abstractions that already provide each needed capability.
    - Put reuse and contract checks in state instructions and acceptanceCriteria. Do not create duplicate implementation states when an existing capability can be reused or extended.
@@ -504,7 +474,7 @@ Planning procedure:
    - Use abstraction levels goal, system, component, implementation, and verification.
    - parentId expresses conceptual ownership or decomposition. It does not create an execution dependency; transitions do that.
    - Each executable action state must have one bounded responsibility, an explicit role, a concrete instruction, measurable acceptanceCriteria, and an errorPolicy.
-   - Keep states large enough to represent meaningful outcomes and small enough that their evidence can be checked independently.
+   - Keep states large enough to represent meaningful outcomes.
 
 4. Build the dependency graph before choosing an order.
    - For every pair of action states, ask whether one consumes an artifact, decision, contract, or verified result produced by the other.
@@ -516,10 +486,11 @@ Planning procedure:
    - Set strategy to sequential only when every action is dependency-constrained; rationale must name those concrete predecessor relationships.
 
 5. Choose state kinds by runtime meaning.
-   - action: work that produces independently verifiable evidence.
+   - action: work that produces independently verifiable outcomes.
    - choice: a decision point with at least two guarded outgoing transitions. Guards should be mutually understandable and priorities deterministic.
    - fork: structural state whose outgoing transition activates multiple branch-entry states at once.
    - join: structural convergence reached by a transition whose from array contains every required branch-completion state.
+   - checkpoint: structural marker that records one independently completed parallel branch.
    - final: terminal success, failure, or blocked outcome. Final states have no outgoing transitions.
 
 6. Define transitions as executable hyperedges.
@@ -538,28 +509,22 @@ Planning procedure:
    - Provide an exit path to success, failure, or blocked. Set global maxTransitions high enough for valid retries and low enough to stop runaway execution.
 
 9. Design verification as part of the graph.
-   - acceptanceCriteria must name observable evidence such as exact tests, type checks, runtime probes, changed contracts, or inspected artifacts.
+   - acceptanceCriteria must name observable outcomes such as exact tests, type checks, runtime probes, changed contracts, or inspected artifacts.
    - Put shared integration verification after joins. Keep branch-local verification inside its branch when it does not depend on other branches.
-   - A success transition is valid only after its source acceptanceCriteria can be supported by concrete evidence.
+   - A success transition is valid only after its source acceptanceCriteria can be supported.
 
 10. Audit the complete machine before submission.
    - Check IDs and references, reachability, final outcomes, parent hierarchy, guard variables, error policies, loop bounds, fork targets, join sources, and transition limits.
    - Look for accidental linear chains. Convert independent siblings into fork/join branches.
    - Confirm the machine still covers the user's full goal and every named deliverable.
 
-Submission protocol:
-- ${SUBMIT_PLAN_TOOL} retains partial top-level fields and reports what is missing.
-- A reliable split is: metadata/context/parallelism first, the complete states array second, and the complete transitions array plus limits third.
-- Each later states or transitions field replaces that whole stored array. Send the complete corrected array when fixing it; do not send array fragments across calls.
-- Validation errors identify structural corrections. Resubmit the corrected field while relying on the stored draft for unchanged fields.
-- Do not present a numbered plan as the authoritative artifact. Planning finishes only after the tool accepts the machine.
-
-Canonical parallel shape:
-- an action produces shared prerequisites;
-- it transitions to a fork;
-- one fork transition activates two or more independent action states;
-- a multi-source transition consumes all completed branch states into a join;
-- the join transitions to shared verification and then a final state.
+Guide protocol:
+- Call start once, then expand the open frontier with topology operations.
+- Use add_parallel for independent sibling outcomes and add_sequence only for concrete dependencies.
+- Use add_choice for dynamic or user-dependent routes instead of silently selecting a branch.
+- Treat action nodes as required postconditions. Existing code may satisfy one after verification; do not encode needless rewrites.
+- Add verification, convergence, revision, and final paths before finalize.
+- Repair only the affected topology operation when finalize reports an error. Never resend the graph.
 
 Keep built-in write tools disabled throughout planning.`,
 					display: false,
@@ -568,20 +533,10 @@ Keep built-in write tools disabled throughout planning.`,
 		}
 
 		if (executionMode && machineDefinition && runtimeSnapshot) {
-			const fsm = new PlanFSM(machineDefinition, runtimeSnapshot);
 			return {
 				message: {
 					customType: "plan-execution-context",
-					content: `[EXECUTING PLAN FSM - Full tool access enabled]
-${formatPlanRuntime(machineDefinition, runtimeSnapshot)}
-
-Active state contracts:
-${formatActiveStateInstructions(machineDefinition, runtimeSnapshot)}
-
-Enabled transitions:
-${formatEnabledTransitions(getEnabledTransitions(fsm))}
-
-Work only on active states. Verify their acceptance criteria, then call ${TRANSITION_PLAN_TOOL} with the exact event and concrete evidence. Parallel active states may advance independently. A join transition becomes enabled only after all source states are active. Follow failure, retry, fallback, and loop transitions when success criteria are not met.`,
+					content: executionContext(),
 					display: false,
 				},
 			};
@@ -589,6 +544,10 @@ Work only on active states. Verify their acceptance criteria, then call ${TRANSI
 	});
 
 	pi.on("agent_start", async (_event, ctx) => {
+		if (executionMode && runtimeSnapshot?.status === "running") {
+			executionRunTransitionCount = runtimeSnapshot.transitionCount;
+			return;
+		}
 		if (!planModeEnabled || machineDefinition) return;
 		planAgentRunning = true;
 		updateStatus(ctx);
@@ -597,6 +556,19 @@ Work only on active states. Verify their acceptance criteria, then call ${TRANSI
 	pi.on("agent_end", async (_event, ctx) => {
 		planAgentRunning = false;
 		updateStatus(ctx);
+		if (executionRunTransitionCount !== undefined) {
+			const progressed =
+				(runtimeSnapshot?.transitionCount ?? executionRunTransitionCount) > executionRunTransitionCount;
+			executionRunTransitionCount = undefined;
+			if (!executionMode || runtimeSnapshot?.status !== "running") return;
+			noProgressRuns = progressed ? 0 : noProgressRuns + 1;
+			if (noProgressRuns >= 2) {
+				blockExecution(ctx, "The execution agent ended twice without advancing any active PlanFSM state.");
+				return;
+			}
+			executionContinuationPending = true;
+			return;
+		}
 		if (!planModeEnabled || !planSubmittedThisRun || !machineDefinition || !runtimeSnapshot || !ctx.hasUI) return;
 		planSubmittedThisRun = false;
 
@@ -609,21 +581,13 @@ Work only on active states. Verify their acceptance criteria, then call ${TRANSI
 
 		if (choice === "Execute the plan") {
 			const fsm = new PlanFSM(machineDefinition, runtimeSnapshot);
+			enableExecutionTools();
 			runtimeSnapshot = fsm.start();
 			planModeEnabled = false;
 			executionMode = true;
-			enableExecutionTools();
 			updateStatus(ctx);
 			persistState();
-			pi.sendMessage(planMessage, { deliverAs: "followUp" });
-			pi.sendMessage(
-				{
-					customType: "plan-mode-execute",
-					content: `Execute the active PlanFSM states.\n\n${formatPlanRuntime(machineDefinition, runtimeSnapshot)}`,
-					display: true,
-				},
-				{ triggerTurn: true, deliverAs: "followUp" },
-			);
+			executionKickoffPending = true;
 		} else if (choice === "Refine the plan") {
 			const refinement = await ctx.ui.editor("Refine the PlanFSM:", "");
 			if (refinement?.trim()) {
@@ -634,6 +598,34 @@ Work only on active states. Verify their acceptance criteria, then call ${TRANSI
 				pi.sendUserMessage(refinement.trim(), { deliverAs: "followUp" });
 			}
 		}
+	});
+
+	pi.on("agent_settled", async () => {
+		if (
+			!executionMode ||
+			runtimeSnapshot?.status !== "running" ||
+			(!executionKickoffPending && !executionContinuationPending)
+		) {
+			return;
+		}
+		const kickoff = executionKickoffPending;
+		executionKickoffPending = false;
+		executionContinuationPending = false;
+		if (kickoff && machineDefinition) {
+			pi.sendMessage({
+				customType: "plan-machine",
+				content: formatPlanMachine(machineDefinition),
+				display: true,
+			});
+		}
+		pi.sendMessage(
+			{
+				customType: "plan-mode-execute",
+				content: kickoff ? "Begin the ready PlanFSM frontier." : "Continue the ready PlanFSM frontier.",
+				display: true,
+			},
+			{ triggerTurn: true },
+		);
 	});
 
 	pi.on("session_start", async (_event, ctx) => {
@@ -651,8 +643,9 @@ Work only on active states. Verify their acceptance criteria, then call ${TRANSI
 		if (entry?.data) {
 			planModeEnabled = entry.data.enabled ?? planModeEnabled;
 			executionMode = entry.data.executing ?? false;
+			grillBeforePlanning = entry.data.grillBeforePlanning ?? false;
 			toolsBeforePlanMode = entry.data.toolsBeforePlanMode;
-			machineDraft = entry.data.draft ?? {};
+			planGuideDraft = entry.data.draft ?? createPlanGuideDraft();
 			if (entry.data.machine && entry.data.snapshot) {
 				try {
 					const restored = new PlanFSM(entry.data.machine, entry.data.snapshot);

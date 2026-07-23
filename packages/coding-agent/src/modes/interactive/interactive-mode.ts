@@ -193,6 +193,32 @@ class ExpandableText extends Text implements Expandable {
 	}
 }
 
+class ExtensionTextWidget implements Component {
+	private textComponents: Text[] = [];
+
+	constructor(lines: readonly string[]) {
+		this.setLines(lines);
+	}
+
+	setLines(lines: readonly string[]): void {
+		for (let index = 0; index < lines.length; index++) {
+			const line = lines[index] ?? "";
+			const existing = this.textComponents[index];
+			if (existing) existing.setText(line);
+			else this.textComponents.push(new Text(line, 1, 0));
+		}
+		this.textComponents.length = lines.length;
+	}
+
+	render(width: number): string[] {
+		return this.textComponents.flatMap((component) => component.render(width));
+	}
+
+	invalidate(): void {
+		for (const component of this.textComponents) component.invalidate();
+	}
+}
+
 type CompactionQueuedMessage = {
 	text: string;
 	mode: "steer" | "followUp";
@@ -778,20 +804,7 @@ export class InteractiveMode {
 			console.log(theme.fg("dim", `Model scope: ${modelList}${cycleHint}`));
 		}
 
-		// Add header container as first child. Populate it after applying theme settings.
-		// Keep loaded resources before chat so restored session messages never precede them.
-		this.ui.addChild(this.headerContainer);
-		this.ui.addChild(this.loadedResourcesContainer);
-
-		this.ui.addChild(this.statusContainer);
-		this.renderWidgets(); // Initialize with default spacer
-		this.ui.addChild(this.widgetContainerAbove);
-		this.ui.addChild(this.editorContainer);
-		this.ui.addChild(this.widgetContainerBelow);
-
-		this.ui.addChild(this.chatContainer);
-		this.ui.addChild(this.pendingMessagesContainer);
-		this.ui.addChild(this.footer);
+		this.mountMainLayout();
 		this.ui.setFocus(this.editor);
 
 		this.setupKeyHandlers();
@@ -885,6 +898,21 @@ export class InteractiveMode {
 
 		// Initialize available provider count for footer display
 		await this.updateAvailableProviderCount();
+	}
+
+	private mountMainLayout(): void {
+		// Keep ordinary output-producing surfaces before the input. A widget explicitly
+		// placed belowEditor remains below because that placement is intentional.
+		this.ui.addChild(this.headerContainer);
+		this.ui.addChild(this.loadedResourcesContainer);
+		this.ui.addChild(this.chatContainer);
+		this.ui.addChild(this.pendingMessagesContainer);
+		this.ui.addChild(this.statusContainer);
+		this.renderWidgets();
+		this.ui.addChild(this.widgetContainerAbove);
+		this.ui.addChild(this.editorContainer);
+		this.ui.addChild(this.widgetContainerBelow);
+		this.ui.addChild(this.footer);
 	}
 
 	/**
@@ -1973,38 +2001,49 @@ export class InteractiveMode {
 		options?: ExtensionWidgetOptions,
 	): void {
 		const placement = options?.placement ?? "aboveEditor";
+		const targetMap = placement === "belowEditor" ? this.extensionWidgetsBelow : this.extensionWidgetsAbove;
+		const otherMap = placement === "belowEditor" ? this.extensionWidgetsAbove : this.extensionWidgetsBelow;
 		const removeExisting = (map: Map<string, Component & { dispose?(): void }>) => {
 			const existing = map.get(key);
 			if (existing?.dispose) existing.dispose();
 			map.delete(key);
 		};
 
-		removeExisting(this.extensionWidgetsAbove);
-		removeExisting(this.extensionWidgetsBelow);
+		removeExisting(otherMap);
 
 		if (content === undefined) {
+			removeExisting(targetMap);
 			this.renderWidgets();
 			return;
 		}
 
-		let component: Component & { dispose?(): void };
-
-		if (Array.isArray(content)) {
-			// Wrap string array in a Container with Text components
-			const container = new Container();
-			for (const line of content.slice(0, InteractiveMode.MAX_WIDGET_LINES)) {
-				container.addChild(new Text(line, 1, 0));
-			}
-			if (content.length > InteractiveMode.MAX_WIDGET_LINES) {
-				container.addChild(new Text(theme.fg("muted", "... (widget truncated)"), 1, 0));
-			}
-			component = container;
-		} else {
-			// Factory function - create component
-			component = content(this.ui, theme);
+		const widgetLines = Array.isArray(content)
+			? [
+					...content.slice(0, InteractiveMode.MAX_WIDGET_LINES),
+					...(content.length > InteractiveMode.MAX_WIDGET_LINES
+						? [theme.fg("muted", "... (widget truncated)")]
+						: []),
+				]
+			: undefined;
+		const existing = targetMap.get(key);
+		if (widgetLines && existing instanceof ExtensionTextWidget) {
+			existing.setLines(widgetLines);
+			this.ui.requestRender();
+			return;
 		}
 
-		const targetMap = placement === "belowEditor" ? this.extensionWidgetsBelow : this.extensionWidgetsAbove;
+		removeExisting(targetMap);
+		let component: Component & { dispose?(): void };
+
+		if (widgetLines) {
+			component = new ExtensionTextWidget(widgetLines);
+		} else if (typeof content === "function") {
+			// Factory function - create component
+			component = content(this.ui, theme);
+		} else {
+			return;
+		}
+
 		targetMap.set(key, component);
 		this.renderWidgets();
 	}
@@ -2712,6 +2751,18 @@ export class InteractiveMode {
 			text = text.trim();
 			if (!text) return;
 
+			// /interrupt is the live control channel for adversarial_discussion.
+			// It must bypass the ordinary input queue while that command owns the turn.
+			if (
+				this.session.isExtensionCommandRunning("adversarial_discussion") &&
+				this.isAdversarialInterruptCommand(text)
+			) {
+				this.editor.addToHistory?.(text);
+				this.editor.setText("");
+				await this.session.prompt(text);
+				return;
+			}
+
 			// Handle commands
 			if (text === "/settings") {
 				this.showSettingsSelector();
@@ -2824,6 +2875,11 @@ export class InteractiveMode {
 				const customInstructions = text.startsWith("/compact ") ? text.slice(9).trim() : undefined;
 				this.editor.setText("");
 				await this.handleCompactCommand(customInstructions);
+				return;
+			}
+			if (text === "/init" || text === "/rebuild_sysprompt") {
+				this.editor.setText("");
+				await this.handleReloadCommand(true);
 				return;
 			}
 			if (text === "/reload") {
@@ -4120,6 +4176,12 @@ export class InteractiveMode {
 		const spaceIndex = text.indexOf(" ");
 		const commandName = spaceIndex === -1 ? text.slice(1) : text.slice(1, spaceIndex);
 		return !!extensionRunner.getCommand(commandName);
+	}
+
+	private isAdversarialInterruptCommand(text: string): boolean {
+		const spaceIndex = text.indexOf(" ");
+		const commandName = spaceIndex === -1 ? text.slice(1) : text.slice(1, spaceIndex);
+		return commandName === "interrupt" && this.isExtensionCommand(text);
 	}
 
 	private async flushCompactionQueue(options?: { willRetry?: boolean }): Promise<void> {
@@ -5651,7 +5713,7 @@ export class InteractiveMode {
 	// Command handlers
 	// =========================================================================
 
-	private async handleReloadCommand(): Promise<void> {
+	private async handleReloadCommand(rebuildSystemPrompt = false): Promise<void> {
 		if (this.session.isStreaming) {
 			this.showWarning("Wait for the current response to finish before reloading.");
 			return;
@@ -5669,7 +5731,12 @@ export class InteractiveMode {
 		reloadBox.addChild(new Spacer(1));
 		reloadBox.addChild(
 			new Text(
-				theme.fg("muted", "Reloading keybindings, extensions, skills, prompts, themes, and context files..."),
+				theme.fg(
+					"muted",
+					rebuildSystemPrompt
+						? "Reloading project resources and rebuilding system_prompt.md..."
+						: "Reloading keybindings, extensions, skills, prompts, themes, and context files...",
+				),
 				1,
 				0,
 			),
@@ -5705,6 +5772,7 @@ export class InteractiveMode {
 
 		try {
 			await this.session.reload({ beforeSessionStart: restoreChatBeforeSessionStart });
+			const rebuiltSystemPromptPath = rebuildSystemPrompt ? this.session.rebuildProjectSystemPrompt() : undefined;
 			restoreChatBeforeSessionStart();
 			configureHttpDispatcher(this.settingsManager.getHttpIdleTimeoutMs());
 			this.keybindings.reload();
@@ -5741,9 +5809,11 @@ export class InteractiveMode {
 				this.showError(`models.json error: ${modelsJsonError}`);
 			}
 			this.showStatus(
-				savedImplicitProjectTrust
-					? "Reloaded keybindings, extensions, skills, prompts, themes, and context files; saved project trust"
-					: "Reloaded keybindings, extensions, skills, prompts, themes, and context files",
+				rebuiltSystemPromptPath
+					? `Rebuilt and applied ${rebuiltSystemPromptPath}`
+					: savedImplicitProjectTrust
+						? "Reloaded keybindings, extensions, skills, prompts, themes, and context files; saved project trust"
+						: "Reloaded keybindings, extensions, skills, prompts, themes, and context files",
 			);
 			dismissReloadBox(this.editor as Component);
 			reloadBoxDismissed = true;

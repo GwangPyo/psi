@@ -112,6 +112,7 @@ The bound is O(h).`),
 			runSubagentPdf,
 		})({
 			on: vi.fn(),
+			registerMessageRenderer: vi.fn(),
 			getActiveTools: () => [],
 			getAllTools: () => [],
 			registerCommand: vi.fn(),
@@ -184,6 +185,7 @@ The bound is O(h).`),
 		const setWidget = vi.fn();
 		const interpretExtractionIntent = vi.fn(async () => "Check deviations from the current Python implementation.");
 		const eventHandlers = new Map<string, (event?: unknown) => unknown>();
+		const messageRenderers = new Map<string, unknown>();
 		const originalTools = ["bash", "read", "write", "mcp"];
 		createResearchExtension({
 			getSubagentModelReference: () => "provider/mid-vlm",
@@ -192,6 +194,7 @@ The bound is O(h).`),
 			runSubagentPdf,
 		})({
 			on: (event: string, handler: () => void) => eventHandlers.set(event, handler),
+			registerMessageRenderer: (customType: string, renderer: unknown) => messageRenderers.set(customType, renderer),
 			getActiveTools: () => originalTools,
 			getAllTools: () =>
 				["mcp", "research_sources_record", "research_pdf_download", "research_papers_list", "research_pdf"].map(
@@ -217,6 +220,7 @@ The bound is O(h).`),
 		} as unknown as ExtensionCommandContext;
 		const discoveredResources = eventHandlers.get("resources_discover")?.() as { skillPaths?: string[] } | undefined;
 		expect(discoveredResources?.skillPaths).toHaveLength(1);
+		expect(messageRenderers.has("research-extraction-request")).toBe(true);
 		expect(
 			await fs.promises.stat(path.join(discoveredResources?.skillPaths?.[0] ?? "", "pdf-to-latex", "SKILL.md")),
 		).toBeDefined();
@@ -244,13 +248,18 @@ The bound is O(h).`),
 		await commands.get("extract_papers")?.("compare implementation constraints", ctx);
 		expect(interpretExtractionIntent).toHaveBeenCalledTimes(1);
 		expect(interpretExtractionIntent).toHaveBeenCalledWith(ctx, "compare implementation constraints");
-		expect(sendMessage).toHaveBeenCalledTimes(2);
+		expect(sendMessage).toHaveBeenCalledTimes(3);
+		expect(sendMessage.mock.calls[1]?.[0]).toEqual({
+			customType: "research-extraction-request",
+			content: "compare implementation constraints",
+			display: true,
+		});
 		expect(runSubagentPdf).toHaveBeenCalledWith({
 			cwd,
 			subagentModelReference: "provider/mid-vlm",
 			backgroundModelReference: "provider/cheap-model",
 			source: "research/papers/paper-a.pdf",
-			task: expect.stringContaining("Check deviations from the current Python implementation."),
+			task: "Original user request: compare implementation constraints\n\nMain-model intention brief:\nCheck deviations from the current Python implementation.",
 			format: "auto",
 			signal: undefined,
 			onProgress: expect.any(Function),
@@ -261,13 +270,13 @@ The bound is O(h).`),
 			{ placement: "aboveEditor" },
 		);
 		expect(setWidget).toHaveBeenLastCalledWith("research-extraction", undefined, { placement: "aboveEditor" });
-		expect(sendMessage.mock.calls[1]?.[0]).toMatchObject({
+		expect(sendMessage.mock.calls[2]?.[0]).toMatchObject({
 			customType: "research-stage-instruction",
 			content: expect.stringContaining("No tool calls are needed now"),
 			display: false,
 		});
-		expect(sendMessage.mock.calls[1]?.[0].content).toContain("Do not turn the task into a generic paper summary");
-		expect(sendMessage.mock.calls[1]?.[0].content).toContain("# Task-specific evidence");
+		expect(sendMessage.mock.calls[2]?.[0].content).toContain("Do not turn the task into a generic paper summary");
+		expect(sendMessage.mock.calls[2]?.[0].content).toContain("# Task-specific evidence");
 		expect(notify).toHaveBeenCalledWith("Extracting task-specific evidence from 1 PDFs…", "info");
 		expect(setActiveTools).toHaveBeenLastCalledWith([]);
 

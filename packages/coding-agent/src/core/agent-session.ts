@@ -15,14 +15,15 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname } from "node:path";
-import type {
+import {
 	Agent,
-	AgentEvent,
-	AgentMessage,
-	AgentState,
-	AgentTool,
-	PrepareNextTurnContext,
-	ThinkingLevel,
+	type AgentEvent,
+	type AgentMessage,
+	type AgentState,
+	type AgentTool,
+	type AgentToolResult,
+	type PrepareNextTurnContext,
+	type ThinkingLevel,
 } from "@earendil-works/pi-agent-core";
 import { contentText } from "@earendil-works/pi-ai";
 import type {
@@ -81,6 +82,8 @@ import {
 	type SessionBeforeTreeResult,
 	type SessionStartEvent,
 	type ShutdownHandler,
+	type SpawnAgentOptions,
+	type SpawnedAgent,
 	type ToolDefinition,
 	type ToolExecutionEndEvent,
 	type ToolExecutionStartEvent,
@@ -102,7 +105,15 @@ import { CURRENT_SESSION_VERSION, getLatestCompactionEntry, type SessionHeader }
 import type { SettingsManager } from "./settings-manager.ts";
 import type { SlashCommandInfo } from "./slash-commands.ts";
 import { createSyntheticSourceInfo, type SourceInfo } from "./source-info.ts";
-import { type BuildSystemPromptOptions, buildSystemPrompt } from "./system-prompt.ts";
+import {
+	type BuildSystemPromptOptions,
+	buildSystemPrompt,
+	getProjectSystemPromptPath,
+	injectRuntimeTools,
+	injectToolGuidance,
+	loadOrCreateProjectSystemPrompt,
+	writeProjectSystemPrompt,
+} from "./system-prompt.ts";
 import { type BashOperations, createLocalBashOperations } from "./tools/bash.ts";
 import { createAllToolDefinitions } from "./tools/index.ts";
 import { createToolDefinitionFromAgentTool } from "./tools/tool-definition-wrapper.ts";
@@ -309,6 +320,7 @@ export class AgentSession {
 	private _unsubscribeAgent?: () => void;
 	private _eventListeners: AgentSessionEventListener[] = [];
 	private _isAgentRunActive = false;
+	private _activeExtensionCommands = new Map<string, number>();
 	private _idleWaitPromise: Promise<void> | undefined;
 	private _resolveIdleWait: (() => void) | undefined;
 
@@ -367,8 +379,10 @@ export class AgentSession {
 
 	// Base system prompt (without extension appends) - used to apply fresh appends each turn
 	private _baseSystemPrompt = "";
+	private _generatedProjectSystemPrompt = "";
 	private _baseSystemPromptOptions!: BuildSystemPromptOptions;
 	private _systemPromptOverride?: string;
+	private _projectSystemPromptActive = false;
 
 	constructor(config: AgentSessionConfig) {
 		this.agent = config.agent;
@@ -880,6 +894,11 @@ export class AgentSession {
 		return !this._isAgentRunActive;
 	}
 
+	/** Whether the named extension slash-command handler is currently running. */
+	isExtensionCommandRunning(commandName: string): boolean {
+		return (this._activeExtensionCommands.get(commandName) ?? 0) > 0;
+	}
+
 	/** Current effective system prompt (includes any per-turn extension modifications) */
 	get systemPrompt(): string {
 		return this.agent.state.systemPrompt;
@@ -911,6 +930,85 @@ export class AgentSession {
 		}));
 	}
 
+	/**
+	 * Create an isolated agent inside the current process.
+	 *
+	 * The child shares provider/auth plumbing and the already-registered tool
+	 * implementations, but owns a separate transcript and system prompt.
+	 */
+	spawnAgent(options: SpawnAgentOptions): SpawnedAgent {
+		const tools = (options.toolNames ?? this.getActiveToolNames())
+			.map((name) => this._toolRegistry.get(name))
+			.filter((tool): tool is AgentTool => tool !== undefined);
+		const agent = new Agent({
+			initialState: {
+				systemPrompt: options.systemPrompt,
+				model: options.model,
+				thinkingLevel: clampThinkingLevel(
+					options.model,
+					options.thinkingLevel ?? this.thinkingLevel,
+				) as ThinkingLevel,
+				tools,
+			},
+			convertToLlm: this.agent.convertToLlm,
+			streamFn: this.agent.streamFunction,
+			getApiKey: this.agent.getApiKey,
+			onPayload: this.agent.onPayload,
+			onResponse: this.agent.onResponse,
+			thinkingBudgets: this.agent.thinkingBudgets,
+			transport: this.agent.transport,
+			maxRetryDelayMs: this.agent.maxRetryDelayMs,
+			toolExecution: this.agent.toolExecution,
+		});
+
+		if (options.beforeToolCall) {
+			agent.beforeToolCall = async ({ toolCall, args }) =>
+				await options.beforeToolCall?.({
+					toolName: toolCall.name,
+					toolCallId: toolCall.id,
+					input: args,
+				});
+		}
+		const unsubscribe = options.onEvent ? agent.subscribe(options.onEvent) : undefined;
+		let disposed = false;
+
+		return {
+			async prompt(message) {
+				if (disposed) throw new Error("Spawned agent has been disposed");
+				await agent.prompt(message);
+				const assistant = [...agent.state.messages].reverse().find((entry) => entry.role === "assistant");
+				const text = assistant ? contentText(assistant.content, "\n").trim() : "";
+				if (!text) {
+					throw new Error(assistant?.errorMessage || "Spawned agent returned no text");
+				}
+				return text;
+			},
+			async abort() {
+				agent.abort();
+				await agent.waitForIdle();
+			},
+			async appendUserMessage(message) {
+				if (disposed) throw new Error("Spawned agent has been disposed");
+				await agent.waitForIdle();
+				agent.state.messages = [
+					...agent.state.messages,
+					{
+						role: "user",
+						content: [{ type: "text", text: message }],
+						timestamp: Date.now(),
+					},
+				];
+			},
+			dispose() {
+				if (disposed) return;
+				disposed = true;
+				agent.abort();
+				unsubscribe?.();
+				agent.reset();
+			},
+		};
+	}
+
 	getToolDefinition(name: string): ToolDefinition | undefined {
 		return this._toolDefinitions.get(name)?.definition;
 	}
@@ -935,6 +1033,12 @@ export class AgentSession {
 
 		// Rebuild base system prompt with new tool set
 		this._baseSystemPrompt = this._rebuildSystemPrompt(validToolNames);
+		if (this._systemPromptOverride !== undefined) {
+			this._systemPromptOverride = injectRuntimeTools(
+				this._systemPromptOverride,
+				this._runtimeToolPrompts(validToolNames),
+			);
+		}
 		this.agent.state.systemPrompt = this._systemPromptOverride ?? this._baseSystemPrompt;
 	}
 
@@ -1016,22 +1120,101 @@ export class AgentSession {
 		return Array.from(unique);
 	}
 
-	private _rebuildSystemPrompt(toolNames: string[]): string {
-		const validToolNames = toolNames.filter((name) => this._toolRegistry.has(name));
-		const toolSnippets: Record<string, string> = {};
-		const promptGuidelines: string[] = [];
-		for (const name of validToolNames) {
-			const snippet = this._toolPromptSnippets.get(name);
-			if (snippet) {
-				toolSnippets[name] = snippet;
-			}
-
-			const toolGuidelines = this._toolPromptGuidelines.get(name);
-			if (toolGuidelines) {
-				promptGuidelines.push(...toolGuidelines);
-			}
+	private _toolSubagentModel(): Model<any> {
+		const configured = this.settingsManager.getSubagentDefaultModel();
+		if (configured) {
+			const configuredModel = this._modelRuntime
+				.getAvailableSnapshot()
+				.find((model) => `${model.provider}/${model.id}` === configured);
+			if (configuredModel) return configuredModel;
 		}
+		return this.agent.state.model;
+	}
 
+	private _guidedToolSubagentPrompt(toolName: string, guidelines: string[]): string {
+		return injectToolGuidance(
+			`You are an isolated tool-call agent. You receive one proposed call and exactly one available tool.
+Inspect only that tool's definition, schema, and guidance. Call it exactly once. Preserve proposed arguments that already fit; correct only what the schema or guidance requires. Do not answer the user's task and do not emit prose instead of the tool call.`,
+			toolName,
+			guidelines,
+		);
+	}
+
+	private async _executeGuidedToolThroughSubagent(
+		tool: AgentTool,
+		guidelines: string[],
+		toolCallId: string,
+		proposedArgs: unknown,
+		signal?: AbortSignal,
+		onUpdate?: (partialResult: AgentToolResult<any>) => void,
+	): Promise<AgentToolResult<any>> {
+		let completed: { result: AgentToolResult<any>; isError: boolean } | undefined;
+		const delegatedTool: AgentTool = {
+			...tool,
+			execute: async (_delegatedCallId, params) => await tool.execute(toolCallId, params, signal, onUpdate),
+		};
+		const subagent = new Agent({
+			initialState: {
+				systemPrompt: this._guidedToolSubagentPrompt(tool.name, guidelines),
+				model: this._toolSubagentModel(),
+				thinkingLevel: "off",
+				tools: [delegatedTool],
+			},
+			streamFn: this.agent.streamFunction,
+			getApiKey: this.agent.getApiKey,
+			transport: this.agent.transport,
+			maxRetryDelayMs: this.agent.maxRetryDelayMs,
+			toolExecution: "sequential",
+			afterToolCall: async ({ result, isError }) => {
+				completed ??= { result, isError };
+				return { terminate: true };
+			},
+		});
+		const abortSubagent = () => subagent.abort();
+		if (signal?.aborted) subagent.abort();
+		else signal?.addEventListener("abort", abortSubagent, { once: true });
+		try {
+			await subagent.prompt(
+				`Requested tool: ${tool.name}\nProposed arguments:\n${JSON.stringify(proposedArgs, null, 2)}`,
+			);
+		} finally {
+			signal?.removeEventListener("abort", abortSubagent);
+		}
+		if (!completed) {
+			throw new Error(`Tool-call subagent did not call ${tool.name}`);
+		}
+		if (completed.isError) {
+			const message = completed.result.content
+				.filter((part): part is TextContent => part.type === "text")
+				.map((part) => part.text)
+				.join("\n")
+				.trim();
+			throw new Error(message || `Tool ${tool.name} failed`);
+		}
+		return completed.result;
+	}
+
+	private _wrapGuidedToolForSubagent(tool: AgentTool, guidelines: string[]): AgentTool {
+		return {
+			...tool,
+			execute: async (toolCallId, params, signal, onUpdate) =>
+				await this._executeGuidedToolThroughSubagent(tool, guidelines, toolCallId, params, signal, onUpdate),
+		};
+	}
+
+	private _runtimeToolPrompts(toolNames: string[]): Array<{ name: string; description?: string }> {
+		return toolNames
+			.filter((name) => this._toolRegistry.has(name))
+			.map((name) => ({
+				name,
+				description:
+					this._toolPromptSnippets.get(name) ??
+					this._normalizePromptSnippet(this._toolDefinitions.get(name)?.definition.description),
+			}));
+	}
+
+	private _rebuildSystemPrompt(toolNames: string[], useProjectFile = true): string {
+		const validToolNames = toolNames.filter((name) => this._toolRegistry.has(name));
 		const loaderSystemPrompt = this._resourceLoader.getSystemPrompt();
 		const loaderAppendSystemPrompt = this._resourceLoader.getAppendSystemPrompt();
 		const appendSystemPrompt =
@@ -1046,17 +1229,85 @@ export class AgentSession {
 			customPrompt: loaderSystemPrompt,
 			appendSystemPrompt,
 			selectedTools: validToolNames,
-			toolSnippets,
-			promptGuidelines,
 		};
-		return buildSystemPrompt(this._baseSystemPromptOptions);
+		this._generatedProjectSystemPrompt = buildSystemPrompt(this._baseSystemPromptOptions);
+		const projectPrompt =
+			useProjectFile && this._projectSystemPromptActive
+				? loadOrCreateProjectSystemPrompt(this._cwd, this._generatedProjectSystemPrompt)
+				: this._generatedProjectSystemPrompt;
+		return injectRuntimeTools(
+			projectPrompt,
+			this._runtimeToolPrompts(validToolNames),
+			Array.from(this._toolPromptGuidelines.values()).flat(),
+		);
+	}
+
+	private _activateProjectSystemPrompt(): void {
+		const projectPrompt = loadOrCreateProjectSystemPrompt(this._cwd, this._generatedProjectSystemPrompt);
+		this._baseSystemPrompt = injectRuntimeTools(
+			projectPrompt,
+			this._runtimeToolPrompts(this.getActiveToolNames()),
+			Array.from(this._toolPromptGuidelines.values()).flat(),
+		);
+		this._projectSystemPromptActive = true;
+		this.agent.state.systemPrompt = this._systemPromptOverride ?? this._baseSystemPrompt;
+	}
+
+	/** Regenerate system_prompt.md from the current tools, skills, context, and prompt inputs, then apply it. */
+	rebuildProjectSystemPrompt(): string {
+		this._rebuildSystemPrompt(this.getActiveToolNames(), false);
+		const promptPath = writeProjectSystemPrompt(this._cwd, this._generatedProjectSystemPrompt);
+		this._projectSystemPromptActive = true;
+		this._baseSystemPrompt = this._rebuildSystemPrompt(this.getActiveToolNames());
+		this._systemPromptOverride = undefined;
+		this.agent.state.systemPrompt = this._baseSystemPrompt;
+		return promptPath;
 	}
 
 	// =========================================================================
 	// Prompting
 	// =========================================================================
 
+	private async _prepareAgentStart(
+		prompt: string,
+		images: ImageContent[] | undefined,
+		messages: AgentMessage[],
+	): Promise<AgentMessage[]> {
+		const result = await this._extensionRunner.emitBeforeAgentStart(
+			prompt,
+			images,
+			this._baseSystemPrompt,
+			this._baseSystemPromptOptions,
+		);
+		for (const msg of result?.messages ?? []) {
+			messages.push({
+				role: "custom",
+				customType: msg.customType,
+				content: msg.content ?? [],
+				display: msg.display,
+				details: msg.details,
+				timestamp: Date.now(),
+			});
+		}
+		if (result?.systemPrompt !== undefined) {
+			this._systemPromptOverride = result.systemPrompt;
+			this.agent.state.systemPrompt = result.systemPrompt;
+		} else {
+			this._systemPromptOverride = undefined;
+			this.agent.state.systemPrompt = this._baseSystemPrompt;
+		}
+		return messages;
+	}
+
 	private async _runAgentPrompt(messages: AgentMessage | AgentMessage[]): Promise<void> {
+		if (!this._projectSystemPromptActive) this._activateProjectSystemPrompt();
+		if (this._systemPromptOverride !== undefined) {
+			this._systemPromptOverride = injectRuntimeTools(
+				this._systemPromptOverride,
+				this._runtimeToolPrompts(this.getActiveToolNames()),
+			);
+			this.agent.state.systemPrompt = this._systemPromptOverride;
+		}
 		this._isAgentRunActive = true;
 		try {
 			await this.agent.prompt(messages);
@@ -1065,6 +1316,7 @@ export class AgentSession {
 			}
 		} finally {
 			this._systemPromptOverride = undefined;
+			this.agent.state.systemPrompt = this._baseSystemPrompt;
 			this._flushPendingBashMessages();
 			await this._emitAgentSettled();
 		}
@@ -1219,36 +1471,7 @@ export class AgentSession {
 			}
 			this._pendingNextTurnMessages = [];
 
-			// Emit before_agent_start extension event
-			const result = await this._extensionRunner.emitBeforeAgentStart(
-				expandedText,
-				currentImages,
-				this._baseSystemPrompt,
-				this._baseSystemPromptOptions,
-			);
-			// Add all custom messages from extensions
-			if (result?.messages) {
-				for (const msg of result.messages) {
-					messages.push({
-						role: "custom",
-						customType: msg.customType,
-						// Untyped extensions can pass null/missing content; normalize at ingestion.
-						content: msg.content ?? [],
-						display: msg.display,
-						details: msg.details,
-						timestamp: Date.now(),
-					});
-				}
-			}
-			// Apply extension-modified system prompt, or reset to base
-			if (result?.systemPrompt !== undefined) {
-				this._systemPromptOverride = result.systemPrompt;
-				this.agent.state.systemPrompt = result.systemPrompt;
-			} else {
-				// Ensure we're using the base prompt (in case previous turn had modifications)
-				this._systemPromptOverride = undefined;
-				this.agent.state.systemPrompt = this._baseSystemPrompt;
-			}
+			messages = await this._prepareAgentStart(expandedText, currentImages, messages);
 		} catch (error) {
 			preflightResult?.(false);
 			throw error;
@@ -1277,6 +1500,7 @@ export class AgentSession {
 		// Get command context from extension runner (includes session control methods)
 		const ctx = this._extensionRunner.createCommandContext();
 
+		this._activeExtensionCommands.set(commandName, (this._activeExtensionCommands.get(commandName) ?? 0) + 1);
 		try {
 			await command.handler(args, ctx);
 			return true;
@@ -1288,6 +1512,10 @@ export class AgentSession {
 				error: err instanceof Error ? err.message : String(err),
 			});
 			return true;
+		} finally {
+			const remaining = (this._activeExtensionCommands.get(commandName) ?? 1) - 1;
+			if (remaining > 0) this._activeExtensionCommands.set(commandName, remaining);
+			else this._activeExtensionCommands.delete(commandName);
 		}
 	}
 
@@ -1446,7 +1674,9 @@ export class AgentSession {
 				this.agent.steer(appMessage);
 			}
 		} else if (options?.triggerTurn) {
-			await this._runAgentPrompt(appMessage);
+			const prompt = contentText(appMessage.content, "");
+			const messages = await this._prepareAgentStart(prompt, undefined, [appMessage]);
+			await this._runAgentPrompt(messages);
 		} else {
 			this.agent.state.messages.push(appMessage);
 			this.sessionManager.appendCustomMessageEntry(
@@ -2251,6 +2481,7 @@ export class AgentSession {
 		this._applyExtensionBindings(this._extensionRunner);
 		await this._extensionRunner.emit(this._sessionStartEvent);
 		await this.extendResourcesFromExtensions(this._sessionStartEvent.reason === "reload" ? "reload" : "startup");
+		this._activateProjectSystemPrompt();
 	}
 
 	private async extendResourcesFromExtensions(reason: "startup" | "reload"): Promise<void> {
@@ -2395,6 +2626,7 @@ export class AgentSession {
 				getActiveTools: () => this.getActiveToolNames(),
 				getAllTools: () => this.getAllTools(),
 				setActiveTools: (toolNames) => this.setActiveToolsByName(toolNames),
+				spawnAgent: (options) => this.spawnAgent(options),
 				refreshTools: () => this._refreshToolRegistry(),
 				getCommands,
 				setModel: async (model) => {
@@ -2519,6 +2751,10 @@ export class AgentSession {
 		for (const tool of wrappedExtensionTools as AgentTool[]) {
 			toolRegistry.set(tool.name, tool);
 		}
+		for (const [name, guidelines] of this._toolPromptGuidelines) {
+			const tool = toolRegistry.get(name);
+			if (tool) toolRegistry.set(name, this._wrapGuidedToolForSubagent(tool, guidelines));
+		}
 		this._toolRegistry = toolRegistry;
 
 		const nextActiveToolNames = (
@@ -2551,6 +2787,7 @@ export class AgentSession {
 		flagValues?: Map<string, boolean | string>;
 		includeAllExtensionTools?: boolean;
 	}): void {
+		this._projectSystemPromptActive = false;
 		const autoResizeImages = this.settingsManager.getImageAutoResize();
 		const shellCommandPrefix = this.settingsManager.getShellCommandPrefix();
 		const shellPath = this.settingsManager.getShellPath();
@@ -2598,6 +2835,7 @@ export class AgentSession {
 			activeToolNames: baseActiveToolNames,
 			includeAllExtensionTools: options.includeAllExtensionTools,
 		});
+		if (existsSync(getProjectSystemPromptPath(this._cwd))) this._activateProjectSystemPrompt();
 	}
 
 	async reload(options?: { beforeSessionStart?: () => void | Promise<void> }): Promise<void> {
@@ -2623,6 +2861,7 @@ export class AgentSession {
 			await this._extensionRunner.emit({ type: "session_start", reason: "reload" });
 			await this.extendResourcesFromExtensions("reload");
 		}
+		this._activateProjectSystemPrompt();
 	}
 
 	// =========================================================================

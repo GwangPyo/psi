@@ -6,7 +6,7 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createHarness, createHarnessWithExtensions, type Harness } from "./test-harness.ts";
 
 describe("test harness", () => {
@@ -307,6 +307,42 @@ describe("test harness", () => {
 		await runner!.getCommand("shared-cmd:2")?.handler("second", runner!.createCommandContext());
 
 		expect(calls).toEqual(["alpha:first", "beta:second"]);
+	});
+
+	it("runs before_agent_start for an extension-triggered agent run", async () => {
+		harness = await createHarnessWithExtensions({
+			responses: ["extension response"],
+			extensionFactories: [
+				{
+					path: "<trigger>",
+					factory: (pi) => {
+						pi.on("before_agent_start", (event) => ({
+							systemPrompt: `${event.systemPrompt}\n\nextension run contract`,
+						}));
+						pi.registerCommand("trigger-run", {
+							description: "Trigger an extension-owned run",
+							handler: async () => {
+								pi.sendMessage(
+									{
+										customType: "trigger",
+										content: "start extension run",
+										display: false,
+									},
+									{ triggerTurn: true },
+								);
+							},
+						});
+					},
+				},
+			],
+		});
+
+		const runner = harness.session.extensionRunner!;
+		await runner.getCommand("trigger-run")?.handler("", runner.createCommandContext());
+		await vi.waitFor(() => expect(harness.faux.callCount).toBe(1));
+		await harness.session.waitForIdle();
+
+		expect(harness.faux.contexts[0]?.systemPrompt).toContain("extension run contract");
 	});
 
 	it("session persistence works", async () => {

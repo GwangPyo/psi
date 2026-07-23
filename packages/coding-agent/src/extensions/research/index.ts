@@ -1,16 +1,24 @@
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { Api, Model } from "@earendil-works/pi-ai";
+import type { Api, Model, TextContent } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { getAgentDir } from "../../config.ts";
 import type { ExtensionAPI, ExtensionContext } from "../../core/extensions/types.ts";
 import { sessionEntryToContextMessages } from "../../core/session-manager.ts";
 import { SettingsManager } from "../../core/settings-manager.ts";
+import { UserMessageComponent } from "../../modes/interactive/components/user-message.ts";
 import { startAnimatedStatus } from "../animated-status.ts";
-import { downloadResearchPdfs } from "./pdf-download.ts";
+import { getPiInvocation } from "../pi-invocation.ts";
+import {
+	downloadPdfsToDirectory,
+	downloadResearchPdfs,
+	type PdfDownloadRequest,
+	promoteResearchPdf,
+} from "./pdf-download.ts";
 import {
 	ensurePdfMcpCommand,
 	extractPdfSystemically,
@@ -22,12 +30,15 @@ import {
 	createResearchWorkspace,
 	getResearchWorkspaceStatus,
 	openCurrentResearchWorkspace,
+	type ResearchSourceRecord,
 	type ResearchWorkspace,
+	readResearchSources,
 } from "./workspace.ts";
 
 const MAX_INLINE_RESULT_CHARS = 40_000;
 const BACKGROUND_TIMEOUT_MS = 10 * 60 * 1000;
 const RESEARCH_SKILLS_DIRECTORY = path.join(path.dirname(fileURLToPath(import.meta.url)), "skills");
+const RESEARCH_EXTRACTION_REQUEST_MESSAGE = "research-extraction-request";
 
 interface ResearchPdfDetails {
 	model: string;
@@ -53,25 +64,29 @@ interface SavedEvidence {
 	result: string;
 }
 
+interface CandidateAssessment {
+	decision: "ACCEPT" | "REJECT";
+	title: string;
+	apaReference: string;
+	reason: string;
+	evidence: string;
+}
+
+interface CandidateReviewResult extends PdfDownloadRequest {
+	path?: string;
+	decision?: CandidateAssessment["decision"];
+	reason?: string;
+	localPdfPath?: string;
+	evidencePath?: string;
+	apaReference?: string;
+	error?: string;
+}
+
 interface ResearchDependencies {
 	runSubagentPdf(options: SubagentPdfOptions): Promise<string>;
 	interpretExtractionIntent(ctx: ExtensionContext, task: string): Promise<string>;
 	getSubagentModelReference(ctx: ExtensionContext): string | undefined;
 	getBackgroundModelReference(ctx: ExtensionContext): string | undefined;
-}
-
-function getPiInvocation(args: string[]): { command: string; args: string[] } {
-	const currentScript = process.argv[1];
-	const isBunVirtualScript = currentScript?.startsWith("/$bunfs/root/");
-	if (currentScript && !isBunVirtualScript && fs.existsSync(currentScript)) {
-		return { command: process.execPath, args: [currentScript, ...args] };
-	}
-
-	const executableName = path.basename(process.execPath).toLowerCase();
-	if (!/^(?:node|bun)(?:\.exe)?$/.test(executableName)) {
-		return { command: process.execPath, args };
-	}
-	return { command: "pi", args };
 }
 
 function compactLabel(value: string, maxLength = 72): string {
@@ -242,6 +257,34 @@ export function parseSubagentEvidence(output: string): string {
 		.filter((line) => !/^SUBAGENT_FOCUS:\s*/iu.test(line))
 		.join("\n")
 		.trim();
+}
+
+export function parseCandidateAssessment(output: string): CandidateAssessment {
+	const normalized = output.replace(/\r\n/gu, "\n").trim();
+	const markerIndex = normalized.search(/^CANDIDATE_RESULT:\s*$/imu);
+	const body =
+		markerIndex >= 0
+			? normalized
+					.slice(markerIndex)
+					.replace(/^CANDIDATE_RESULT:\s*$/imu, "")
+					.trim()
+			: normalized;
+	const field = (name: string) =>
+		new RegExp(`^${name}:\\s*(.+)$`, "imu").exec(body)?.[1]?.replace(/\s+/gu, " ").trim() ?? "";
+	const decision = field("DECISION").toUpperCase();
+	if (decision !== "ACCEPT" && decision !== "REJECT") {
+		throw new Error("Candidate review returned no valid ACCEPT or REJECT decision");
+	}
+	const title = field("TITLE");
+	const apaReference = field("APA_REFERENCE");
+	const reason = field("REASON");
+	const evidenceMarker = /^EVIDENCE:\s*$/imu.exec(body);
+	const evidence = evidenceMarker ? body.slice(evidenceMarker.index + evidenceMarker[0].length).trim() : "";
+	if (!title || !reason) throw new Error("Candidate review omitted its title or relevance reason");
+	if (decision === "ACCEPT" && (!apaReference || !evidence)) {
+		throw new Error("Accepted candidate omitted its APA reference or task-specific evidence");
+	}
+	return { decision, title, apaReference, reason, evidence };
 }
 
 function isolatedAgentArguments(modelReference: string, prompt: string, attachments: string[] = []): string[] {
@@ -424,12 +467,210 @@ async function saveEvidence(
 	return { model, outputPath: path.relative(cwd, outputPath), result };
 }
 
+function candidateReviewTask(researchQuestion: string): string {
+	return `Research Question: ${researchQuestion}
+
+Decide whether this downloaded document is strongly relevant enough to keep in the project.
+
+The first and decisive criterion is whether evidence inside the document directly helps answer the Research Question. Topic overlap, matching keywords, a related method, citation popularity, or a useful-looking abstract are not sufficient. ACCEPT only when the full document contains findings that materially answer the question. Otherwise REJECT it.
+
+Read the downloaded PDF itself. Cite PDF page numbers in the evidence. Finish with exactly this machine-readable block:
+
+CANDIDATE_RESULT:
+DECISION: ACCEPT or REJECT
+TITLE: document title
+APA_REFERENCE: complete APA-style reference, including the document title
+REASON: one precise sentence explaining direct answerability
+EVIDENCE:
+task-specific findings from the downloaded document, with page citations
+
+For REJECT, EVIDENCE may explain the mismatch briefly. Do not use web snippets, search-result text, or outside knowledge.`;
+}
+
+async function saveCandidateEvidence(
+	workspace: ResearchWorkspace,
+	cwd: string,
+	source: string,
+	model: string,
+	researchQuestion: string,
+	assessment: CandidateAssessment,
+): Promise<SavedEvidence> {
+	return saveEvidence(
+		workspace,
+		cwd,
+		source,
+		"markdown",
+		model,
+		`# Evidence: ${assessment.title}
+
+- Research Question: ${researchQuestion}
+- Relevance: ${assessment.reason}
+- APA reference: ${assessment.apaReference}
+- Downloaded PDF: ${source}
+
+## Findings
+
+${assessment.evidence}
+`,
+	);
+}
+
+async function appendCandidateSelectionReport(
+	workspace: ResearchWorkspace,
+	researchQuestion: string,
+	results: readonly CandidateReviewResult[],
+): Promise<string> {
+	const reportPath = path.join(workspace.absolutePath, "selection-report.md");
+	const entries = results
+		.map((result) => {
+			const status = result.error ? "ERROR" : (result.decision ?? "ERROR");
+			const detail = result.error ?? result.reason ?? "No review result";
+			const stored = result.localPdfPath ? `\n- Stored PDF: ${result.localPdfPath}` : "";
+			return `### ${result.title ?? result.url}
+
+- Status: ${status}
+- Source: ${result.url}
+- Reason: ${detail}${stored}`;
+		})
+		.join("\n\n");
+	const existing = await fs.promises.stat(reportPath).catch((error: unknown) => {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+		throw error;
+	});
+	await fs.promises.appendFile(
+		reportPath,
+		`${existing?.isFile() ? "" : "# Candidate selection log\n\n"}## ${new Date().toISOString()} — ${researchQuestion}\n\n${entries}\n\n`,
+		"utf8",
+	);
+	return reportPath;
+}
+
+function currentAcceptedSources(
+	sources: readonly ResearchSourceRecord[],
+	researchQuestion: string,
+): ResearchSourceRecord[] {
+	return sources.filter(
+		(source) =>
+			source.researchQuestion === researchQuestion &&
+			source.localPdfPath &&
+			source.evidencePath &&
+			source.apaReference,
+	);
+}
+
+function stripGeneratedReferences(report: string): string {
+	const references = /^##\s+References\s*$/imu.exec(report);
+	return (references ? report.slice(0, references.index) : report).trim();
+}
+
+function validateNumberedCitations(report: string, sourceCount: number): void {
+	const citations = [...report.matchAll(/\[([0-9][0-9,\s-]*)\]/gu)];
+	if (citations.length === 0) throw new Error("Final research report contains no numbered source citations");
+	for (const citation of citations) {
+		const numbers = citation[1]!.match(/\d+/gu)?.map(Number) ?? [];
+		if (numbers.some((number) => number < 1 || number > sourceCount)) {
+			throw new Error(`Final research report cites a source outside the available range [1-${sourceCount}]`);
+		}
+	}
+	const firstSection = /^##\s+(.+)$/mu.exec(report)?.[1]?.trim();
+	if (firstSection !== "Answer to the Research Question") {
+		throw new Error('Final research report must begin with "## Answer to the Research Question"');
+	}
+}
+
+async function writeResearchReport(
+	pi: ExtensionAPI,
+	workspace: ResearchWorkspace,
+	cwd: string,
+	model: Model<Api>,
+	onProgress?: (text: string) => void,
+): Promise<{ outputPath: string; sourceCount: number }> {
+	const sources = currentAcceptedSources(await readResearchSources(workspace), workspace.manifest.goal);
+	if (sources.length === 0) throw new Error("No accepted downloaded papers are available for this Research Question");
+	const evidence = await Promise.all(
+		sources.map(async (source, index) => {
+			const pdfPath = path.resolve(cwd, source.localPdfPath!);
+			const evidencePath = path.resolve(cwd, source.evidencePath!);
+			const [pdfStat, evidenceText] = await Promise.all([
+				fs.promises.stat(pdfPath),
+				fs.promises.readFile(evidencePath, "utf8"),
+			]);
+			if (!pdfStat.isFile()) throw new Error(`Accepted PDF is missing: ${source.localPdfPath}`);
+			return `<source number="${index + 1}" pdf="${source.localPdfPath}" evidence="${source.evidencePath}">
+<apa>${source.apaReference}</apa>
+${evidenceText}
+</source>`;
+		}),
+	);
+	const agent = pi.spawnAgent({
+		model,
+		thinkingLevel: "high",
+		toolNames: [],
+		systemPrompt: `Write a research report using only the supplied evidence extracted from downloaded PDF documents.
+
+The Research Question determines relevance and priority. Use numbered citations such as [1], [2], or [2-5]. Source numbers are fixed by the caller.`,
+	});
+	try {
+		onProgress?.("Writing an evidence-grounded draft");
+		const draft = await agent.prompt(`Research Question: ${workspace.manifest.goal}
+
+Write a detailed first draft from the downloaded-document evidence below. Answer the Research Question in the first substantive section, then support that answer with the necessary detail. Every material claim must carry its numbered source citation. Do not add a References section yet.
+
+<downloaded_document_evidence>
+${evidence.join("\n\n")}
+</downloaded_document_evidence>`);
+
+		onProgress?.("Rebuilding only the report structure");
+		const structure = await agent.prompt(`Rewrite only the structure of the draft you just produced.
+
+<draft>
+${draft}
+</draft>
+
+Return an outline, not report prose. Put the direct answer first, then order the supporting sections so each one advances the Research Question. Identify which fixed source numbers support each section. Remove repetition.`);
+
+		onProgress?.("Reordering and rewriting the final report");
+		const final = stripGeneratedReferences(
+			await agent.prompt(`Rewrite the complete report by applying this structure to the draft:
+
+<structure>
+${structure}
+</structure>
+
+The first level-two heading must be exactly:
+## Answer to the Research Question
+
+That section must give the conclusion immediately, before background or method detail. Preserve necessary technical depth from the draft, but reorder it according to the structure. Base every factual statement only on the downloaded-document evidence already supplied. Use only [1], [2], and compact ranges such as [2-5] for citations. Do not add a References section.`),
+		);
+		validateNumberedCitations(final, sources.length);
+		const references = sources.map((source, index) => `[${index + 1}] ${source.apaReference}`).join("\n");
+		const completeReport = `${final}\n\n## References\n\n${references}\n`;
+		const outputPath = path.join(workspace.absolutePath, "report.md");
+		const temporaryPath = `${outputPath}.${randomUUID()}.tmp`;
+		await fs.promises.writeFile(temporaryPath, completeReport, "utf8");
+		await fs.promises.rename(temporaryPath, outputPath);
+		return { outputPath: path.relative(cwd, outputPath), sourceCount: sources.length };
+	} finally {
+		agent.dispose();
+	}
+}
+
 export function createResearchExtension(
 	dependencies: ResearchDependencies = defaultDependencies,
 ): (pi: ExtensionAPI) => void {
 	return (pi) => {
 		let stageToolRestore: string[] | undefined;
 		let stageInstructionActive = false;
+		pi.registerMessageRenderer(RESEARCH_EXTRACTION_REQUEST_MESSAGE, (message) => {
+			const text =
+				typeof message.content === "string"
+					? message.content
+					: message.content
+							.filter((part): part is TextContent => part.type === "text")
+							.map((part) => part.text)
+							.join("\n");
+			return new UserMessageComponent(text);
+		});
 
 		function restoreStageTools(): void {
 			if (!stageToolRestore) return;
@@ -507,7 +748,7 @@ export function createResearchExtension(
 		pi.registerCommand("collect_papers", {
 			description: "Search the web and collect actual paper PDFs into a new research workspace",
 			handler: async (args, ctx) => {
-				const query = args.trim() || (await ctx.ui.editor("What should I research?", ""))?.trim();
+				const query = (await ctx.ui.editor("What is the Research Question?", args.trim()))?.trim();
 				if (!query) return;
 				const countInput = (await ctx.ui.input("How many papers should I collect?", "5"))?.trim();
 				if (countInput === undefined) return;
@@ -516,17 +757,21 @@ export function createResearchExtension(
 					ctx.ui.notify("Enter a positive whole number.", "error");
 					return;
 				}
-				if (!restrictStageTools(["mcp", "research_sources_record", "research_pdf_download"], ctx)) return;
-				const workspace = await createResearchWorkspace(ctx.cwd, query);
+				if (!restrictStageTools(["mcp", "research_candidates_review", "research_report_write"], ctx)) return;
+				const workspace = await createResearchWorkspace(ctx.cwd, query, count);
 				sendStageInstruction(
 					`Use the research-workflow skill for only the collect stage.
 
 Workspace path: ${workspace.relativePath}
-Target paper count: ${count}
+Target accepted paper count: ${count}
 Research objective: ${query}
 
-Search the real web through the configured web MCP server. Prefer primary papers and official repositories. Record the verified source and direct PDF URLs with research_sources_record, then download the actual PDFs with one batched research_pdf_download call. Both tools must use the current workspace automatically. Do not extract evidence, start a discussion, or modify code in this stage. Finish by reporting the visible workspace path, saved PDF paths, and failed downloads.`,
-					`Collecting ${count} papers into research/papers…`,
+Search the real web through the configured web MCP server. Prefer primary papers and official repositories, but never treat search snippets or abstracts as evidence. Submit plausible direct PDF URLs to research_candidates_review in batches. That tool downloads each candidate temporarily, reads the downloaded PDF, rejects documents that do not directly help answer the Research objective, and moves only accepted PDFs into the visible project workspace.
+
+The target is ${count} accepted papers, not ${count} search results. If a batch is rejected, search for better candidates and review another batch. Do not judge relevance yourself from search metadata and do not use research_pdf_download or research_sources_record. When the target is met—or when credible sources are genuinely exhausted—call research_report_write exactly once. It builds the report only from accepted downloaded PDFs using draft, structure-only rewrite, and final reordered rewrite passes.
+
+Do not start a discussion or modify code. Finish by reporting the visible accepted PDF paths, selection log, report path, and exact rejected or failed candidates.`,
+					`Searching and screening papers for direct answerability…`,
 					ctx,
 				);
 			},
@@ -542,10 +787,15 @@ Search the real web through the configured web MCP server. Prefer primary papers
 					ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
 					return;
 				}
-				const task =
-					args.trim() ||
-					(await ctx.ui.editor("What should I extract from the papers?", workspace.manifest.goal))?.trim();
+				const task = (
+					await ctx.ui.editor("What should I extract from the papers?", args.trim() || workspace.manifest.goal)
+				)?.trim();
 				if (!task) return;
+				pi.sendMessage({
+					customType: RESEARCH_EXTRACTION_REQUEST_MESSAGE,
+					content: task,
+					display: true,
+				});
 				const papersDirectory = path.join(workspace.absolutePath, "papers");
 				const papers = (await fs.promises.readdir(papersDirectory, { withFileTypes: true }))
 					.filter((entry) => entry.isFile() && entry.name.toLowerCase().endsWith(".pdf"))
@@ -698,12 +948,215 @@ ${failurePacket}
 					const workspace = await openCurrentResearchWorkspace(ctx.cwd);
 					const status = await getResearchWorkspaceStatus(workspace);
 					ctx.ui.notify(
-						`${workspace.relativePath}: ${status.sources} sources, ${status.papers} PDFs, ${status.evidence} evidence, ${status.discussions} discussions`,
+						`${workspace.relativePath}: ${status.sources} sources, ${status.papers} PDFs, ${status.evidence} evidence, ${status.discussions} discussions, report ${status.report ? "ready" : "missing"}`,
 						"info",
 					);
 				} catch (error) {
 					ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
 				}
+			},
+		});
+
+		pi.registerTool({
+			name: "research_candidates_review",
+			label: "Review Downloaded Research Candidates",
+			description:
+				"Temporarily download candidate PDFs, read their full contents, and move only documents that directly answer the current Research Question into research/papers.",
+			parameters: Type.Object({
+				candidates: Type.Array(
+					Type.Object({
+						url: Type.String(),
+						title: Type.Optional(Type.String()),
+						landingPageUrl: Type.Optional(Type.String()),
+					}),
+					{ minItems: 1 },
+				),
+			}),
+			async execute(_toolCallId, params, signal, onUpdate, ctx) {
+				const workspace = await openCurrentResearchWorkspace(ctx.cwd);
+				const subagentModelReference = dependencies.getSubagentModelReference(ctx);
+				if (!subagentModelReference) {
+					throw new Error("No image-capable SubAgent model is available for candidate PDF review");
+				}
+				const backgroundModelReference = dependencies.getBackgroundModelReference(ctx);
+				if (!backgroundModelReference) {
+					throw new Error("No BackgroundAgent model is available for candidate-review progress");
+				}
+				const temporaryDirectory = await fs.promises.mkdtemp(path.join(os.tmpdir(), "pi-research-candidates-"));
+				try {
+					const candidates = [
+						...new Map(params.candidates.map((candidate) => [candidate.url, candidate] as const)).values(),
+					];
+					onUpdate?.({
+						content: [{ type: "text", text: `Temporarily downloading ${candidates.length} candidates` }],
+						details: undefined,
+					});
+					const downloads = await downloadPdfsToDirectory(ctx.cwd, temporaryDirectory, candidates, signal);
+					const results = await Promise.all(
+						downloads.map(async (download): Promise<CandidateReviewResult> => {
+							if (!download.path) {
+								return {
+									...download,
+									error: download.error ?? "Candidate PDF was not downloaded",
+								};
+							}
+							const displayTitle = download.title ?? sourceTitle(download.path);
+							onUpdate?.({
+								content: [
+									{
+										type: "text",
+										text: `Reading downloaded candidate “${compactLabel(displayTitle)}” against the Research Question`,
+									},
+								],
+								details: undefined,
+							});
+							try {
+								const rawAssessment = await dependencies.runSubagentPdf({
+									cwd: ctx.cwd,
+									subagentModelReference,
+									backgroundModelReference,
+									source: download.path,
+									task: candidateReviewTask(workspace.manifest.goal),
+									format: "markdown",
+									signal,
+									onProgress: (progress) => {
+										const described = describePaperProgress(progress, displayTitle, workspace.manifest.goal);
+										if (!described) return;
+										onUpdate?.({
+											content: [{ type: "text", text: described.message }],
+											details: undefined,
+										});
+									},
+								});
+								const assessment = parseCandidateAssessment(rawAssessment);
+								if (assessment.decision === "REJECT") {
+									return {
+										...download,
+										path: undefined,
+										decision: assessment.decision,
+										title: assessment.title,
+										reason: assessment.reason,
+									};
+								}
+								const localPdfPath = await promoteResearchPdf(ctx.cwd, workspace, download.path, {
+									url: download.url,
+									title: assessment.title,
+									landingPageUrl: download.landingPageUrl,
+								});
+								const savedEvidence = await saveCandidateEvidence(
+									workspace,
+									ctx.cwd,
+									localPdfPath,
+									subagentModelReference,
+									workspace.manifest.goal,
+									assessment,
+								);
+								return {
+									...download,
+									path: undefined,
+									decision: assessment.decision,
+									title: assessment.title,
+									reason: assessment.reason,
+									localPdfPath,
+									evidencePath: savedEvidence.outputPath,
+									apaReference: assessment.apaReference,
+								};
+							} catch (error) {
+								return {
+									...download,
+									path: undefined,
+									error: error instanceof Error ? error.message : String(error),
+								};
+							}
+						}),
+					);
+					const selectionReport = await appendCandidateSelectionReport(
+						workspace,
+						workspace.manifest.goal,
+						results,
+					);
+					const accepted = results.filter(
+						(
+							result,
+						): result is CandidateReviewResult & {
+							decision: "ACCEPT";
+							localPdfPath: string;
+							evidencePath: string;
+							apaReference: string;
+						} =>
+							result.decision === "ACCEPT" &&
+							!!result.localPdfPath &&
+							!!result.evidencePath &&
+							!!result.apaReference,
+					);
+					await appendResearchSources(
+						workspace,
+						accepted.map((result) => ({
+							url: result.url,
+							title: result.title,
+							landingPageUrl: result.landingPageUrl,
+							localPdfPath: result.localPdfPath,
+							evidencePath: result.evidencePath,
+							apaReference: result.apaReference,
+							relevanceReason: result.reason,
+							researchQuestion: workspace.manifest.goal,
+						})),
+					);
+					const acceptedSources = currentAcceptedSources(
+						await readResearchSources(workspace),
+						workspace.manifest.goal,
+					);
+					const rejected = results.filter((result) => result.decision === "REJECT");
+					const failed = results.filter((result) => result.error);
+					return {
+						content: [
+							{
+								type: "text",
+								text: `Reviewed downloaded PDFs: ${results.length}
+Accepted in this batch: ${accepted.length}
+Rejected in this batch: ${rejected.length}
+Failed in this batch: ${failed.length}
+Accepted for this Research Question: ${acceptedSources.length}${workspace.manifest.targetPaperCount ? `/${workspace.manifest.targetPaperCount}` : ""}
+Selection log: ${path.relative(ctx.cwd, selectionReport)}
+
+${JSON.stringify(results, null, 2)}`,
+							},
+						],
+						details: {
+							results,
+							acceptedTotal: acceptedSources.length,
+							target: workspace.manifest.targetPaperCount,
+							selectionReport: path.relative(ctx.cwd, selectionReport),
+						},
+						isError: accepted.length === 0 && failed.length > 0 && rejected.length === 0,
+					};
+				} finally {
+					await fs.promises.rm(temporaryDirectory, { recursive: true, force: true });
+				}
+			},
+		});
+
+		pi.registerTool({
+			name: "research_report_write",
+			label: "Write Downloaded-Evidence Research Report",
+			description:
+				"Write research/report.md only from accepted downloaded PDFs and their evidence, using draft, structure-only rewrite, and final reordered rewrite passes.",
+			parameters: Type.Object({}),
+			async execute(_toolCallId, _params, _signal, onUpdate, ctx) {
+				const workspace = await openCurrentResearchWorkspace(ctx.cwd);
+				if (!ctx.model) throw new Error("The Main model is unavailable for research report writing");
+				const result = await writeResearchReport(pi, workspace, ctx.cwd, ctx.model, (text) =>
+					onUpdate?.({ content: [{ type: "text", text }], details: undefined }),
+				);
+				return {
+					content: [
+						{
+							type: "text",
+							text: `Research report written from ${result.sourceCount} accepted downloaded PDFs: ${result.outputPath}`,
+						},
+					],
+					details: result,
+				};
 			},
 		});
 
@@ -741,7 +1194,7 @@ ${failurePacket}
 					content: [
 						{
 							type: "text",
-							text: `Workspace: ${workspace.relativePath}\nGoal: ${workspace.manifest.goal}\nSources: ${status.sources}\nPDFs: ${status.papers}\nEvidence: ${status.evidence}\nDiscussions: ${status.discussions}`,
+							text: `Workspace: ${workspace.relativePath}\nGoal: ${workspace.manifest.goal}\nSources: ${status.sources}\nPDFs: ${status.papers}\nEvidence: ${status.evidence}\nDiscussions: ${status.discussions}\nReport: ${status.report ? `${workspace.relativePath}/report.md` : "missing"}`,
 						},
 					],
 					details: { path: workspace.relativePath, ...status },

@@ -1,6 +1,7 @@
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { getModel } from "@earendil-works/pi-ai/compat";
 import { Type } from "typebox";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -89,7 +90,20 @@ describe("AgentSession dynamic tool registration", () => {
 		});
 		expect(session.getActiveToolNames()).toContain("dynamic_tool");
 		expect(session.systemPrompt).toContain("- dynamic_tool: Run dynamic test behavior");
-		expect(session.systemPrompt).toContain("- Use dynamic_tool when the user asks for dynamic behavior tests.");
+		expect(session.systemPrompt).not.toContain("Use dynamic_tool when the user asks for dynamic behavior tests.");
+		const savedPrompt = readFileSync(join(tempDir, "system_prompt.md"), "utf8");
+		expect(savedPrompt).not.toContain("dynamic_tool");
+		expect(savedPrompt).not.toContain("<available_tools>");
+
+		const toolCall = fauxToolCall("dynamic_tool", {});
+		await session.agent.beforeToolCall?.({
+			assistantMessage: fauxAssistantMessage(toolCall, { stopReason: "toolUse" }),
+			toolCall,
+			args: {},
+			context: { systemPrompt: session.systemPrompt, messages: [], tools: [] },
+		});
+		expect(session.systemPrompt).not.toContain('<tool_guidance tool="dynamic_tool">');
+		expect(session.systemPrompt).not.toContain("Use dynamic_tool when the user asks for dynamic behavior tests.");
 
 		session.dispose();
 	});
@@ -137,7 +151,7 @@ describe("AgentSession dynamic tool registration", () => {
 		session.dispose();
 	});
 
-	it("keeps custom tools active but omits them from available tools when promptSnippet is not provided", async () => {
+	it("lists active custom tools using their definition description when promptSnippet is absent", async () => {
 		const settingsManager = SettingsManager.create(tempDir, agentDir);
 		const sessionManager = SessionManager.inMemory();
 
@@ -177,8 +191,7 @@ describe("AgentSession dynamic tool registration", () => {
 
 		expect(session.getAllTools().map((tool) => tool.name)).toContain("hidden_tool");
 		expect(session.getActiveToolNames()).toContain("hidden_tool");
-		expect(session.systemPrompt).not.toContain("hidden_tool");
-		expect(session.systemPrompt).not.toContain("Description should not appear in available tools");
+		expect(session.systemPrompt).toContain("- hidden_tool: Description should not appear in available tools");
 
 		session.dispose();
 	});

@@ -9,9 +9,11 @@
  */
 
 import type {
+	AgentEvent,
 	AgentMessage,
 	AgentToolResult,
 	AgentToolUpdateCallback,
+	BeforeToolCallResult,
 	ThinkingLevel,
 	ToolExecutionMode,
 } from "@earendil-works/pi-agent-core";
@@ -444,9 +446,9 @@ export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = un
 	label: string;
 	/** Description for LLM */
 	description: string;
-	/** Optional one-line snippet for the Available tools section in the default system prompt. Custom tools are omitted from that section when this is not provided. */
+	/** Optional one-line description for this tool in the request-time active tool catalog. Defaults to description. */
 	promptSnippet?: string;
-	/** Optional guideline bullets appended to the default system prompt Guidelines section when this tool is active. */
+	/** Optional guidance given only to the isolated subagent that executes this selected tool. */
 	promptGuidelines?: string[];
 	/** Parameter schema (TypeBox) */
 	parameters: TParams;
@@ -1312,6 +1314,13 @@ export interface ExtensionAPI {
 	/** Set the active tools by name. */
 	setActiveTools(toolNames: string[]): void;
 
+	/**
+	 * Spawn an isolated in-process agent that reuses this session's model runtime,
+	 * authentication, and registered tool implementations without starting another
+	 * pi process or reloading extensions.
+	 */
+	spawnAgent(options: SpawnAgentOptions): SpawnedAgent;
+
 	/** Get available slash commands in the current session. */
 	getCommands(): SlashCommandInfo[];
 
@@ -1548,6 +1557,28 @@ export type SetActiveToolsHandler = (toolNames: string[]) => void;
 
 export type RefreshToolsHandler = () => void;
 
+export interface SpawnAgentOptions {
+	model: Model<any>;
+	systemPrompt: string;
+	thinkingLevel?: ThinkingLevel;
+	toolNames?: string[];
+	onEvent?: (event: AgentEvent) => void | Promise<void>;
+	beforeToolCall?: (event: {
+		toolName: string;
+		toolCallId: string;
+		input: unknown;
+	}) => BeforeToolCallResult | undefined | Promise<BeforeToolCallResult | undefined>;
+}
+
+export interface SpawnedAgent {
+	prompt(message: string): Promise<string>;
+	abort(): Promise<void>;
+	appendUserMessage(message: string): Promise<void>;
+	dispose(): void;
+}
+
+export type SpawnAgentHandler = (options: SpawnAgentOptions) => SpawnedAgent;
+
 export type SetModelHandler = (model: Model<any>) => Promise<boolean>;
 
 export type GetThinkingLevelHandler = () => ThinkingLevel;
@@ -1595,6 +1626,7 @@ export interface ExtensionActions {
 	getActiveTools: GetActiveToolsHandler;
 	getAllTools: GetAllToolsHandler;
 	setActiveTools: SetActiveToolsHandler;
+	spawnAgent: SpawnAgentHandler;
 	refreshTools: RefreshToolsHandler;
 	getCommands: GetCommandsHandler;
 	setModel: SetModelHandler;

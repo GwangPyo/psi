@@ -12,9 +12,11 @@ Keep capabilities independent. Run only the stages requested by the user.
 Use the visible project directory `research/` as the current research workspace. Do not create hidden directories, run ids, or pointer files.
 
 - `manifest.json`: objective and identity
-- `sources.jsonl`: verified landing pages and direct PDF URLs
-- `papers/`: downloaded PDF files
-- `evidence/`: one evidence file per analyzed PDF
+- `sources.jsonl`: accepted sources, direct PDF URLs, APA references, and file-backed evidence identities
+- `papers/`: only downloaded PDFs that directly help answer the Research Question
+- `evidence/`: one task-specific evidence file per accepted PDF
+- `selection-report.md`: accepted, rejected, and failed candidate decisions
+- `report.md`: the current Research Question answered from accepted downloaded documents
 - `discussions/`: optional research-specific discussion artifacts
 
 Treat the visible paths as the contract between stages. Do not rely on hidden in-memory state.
@@ -23,11 +25,16 @@ Treat the visible paths as the contract between stages. Do not rely on hidden in
 
 1. Create a workspace with `research_workspace_create` unless the slash command already created it.
 2. Search through the configured web MCP server. Prefer publishers, arXiv, conference sites, institutional repositories, and author pages over aggregators.
-3. Verify relevance and obtain direct HTTPS PDF URLs.
-4. Record candidates with `research_sources_record`.
-5. Download all selected PDFs in one `research_pdf_download` batch. A search result or abstract is not a collected paper.
+3. Treat search results only as candidate discovery. Search snippets, titles, abstracts, citation counts, and keyword overlap cannot establish relevance or support the report.
+4. Send plausible direct HTTPS PDF URLs to `research_candidates_review` in batches.
+5. The tool downloads candidates into a temporary directory, reads the downloaded PDFs, and evaluates direct answerability. The first criterion is whether the document contains evidence that materially answers the Research Question.
+6. The tool rejects merely topical documents and moves only accepted PDFs into `research/papers/`. It writes accepted evidence to `research/evidence/` and every decision to `research/selection-report.md`.
+7. The requested count is the accepted-paper target, not the number of web results. Search additional candidates when reviewed documents are rejected.
+8. After reaching the target, or genuinely exhausting credible candidates, call `research_report_write` exactly once.
+9. Report generation reads only the accepted local PDF evidence. It performs three model passes: a detailed draft, a structure-only rewrite, then a reordered final rewrite.
+10. `research/report.md` answers the Research Question in its first substantive section, uses numbered citations such as `[1]` and `[2-5]`, and ends with deterministic APA-style entries such as `[1] Author. (Year). Document title. ...`.
 
-During `/collect_papers`, use only the MCP gateway and the two research storage tools. Never invoke Bash, Python, curl, requests, or an ad hoc parser. If the web MCP tool is unavailable, stop and report that failure.
+During `/collect_papers`, use only the MCP gateway, `research_candidates_review`, and `research_report_write`. Never invoke Bash, Python, curl, requests, an ad hoc parser, `research_pdf_download`, or `research_sources_record`. If the web MCP tool is unavailable, stop and report that failure.
 
 ## Extract evidence
 
@@ -48,8 +55,8 @@ Use the existing `/adversarial_discussion` command. Put `research/evidence/` and
 
 ## Stage boundaries
 
-- `/collect_papers <objective>` asks how many papers to collect, then performs only collection.
-- `/extract_papers [question]` uses `research/papers/` and performs only evidence extraction.
+- `/collect_papers` asks for the Research Question and accepted-paper target, then screens candidates and writes the grounded report.
+- `/extract_papers` asks what to extract and uses the accepted PDFs in `research/papers/`.
 - `/research_status` reports artifacts from `research/`.
 - `/adversarial_discussion` performs the existing discussion and handoff.
 

@@ -9,7 +9,10 @@ import {
 	ADVERSARIAL_CONVERSATION_BATCH_TURNS,
 	type AdversarialAgentName,
 	type AdversarialConversationAgent,
+	AdversarialConversationInterruptedError,
 	createAdversarialConversationExtension,
+	getAdversarialConversationToolNames,
+	guardAdversarialReadOnlyToolCall,
 	parseAdversarialAgentCount,
 	runAdversarialConversationBatch,
 } from "../src/extensions/adversarial-conversation/index.ts";
@@ -18,9 +21,13 @@ function createFakeAgent(
 	name: string,
 ): AdversarialConversationAgent & { prompts: string[]; stop: ReturnType<typeof vi.fn> } {
 	const prompts: string[] = [];
+	const interrupt = vi.fn(async () => {});
+	const deliverUserInput = vi.fn(async () => {});
 	const stop = vi.fn(async () => {});
 	return {
 		prompts,
+		interrupt,
+		deliverUserInput,
 		stop,
 		async respond(prompt) {
 			prompts.push(prompt);
@@ -114,6 +121,65 @@ describe("adversarial conversation", () => {
 		expect(parseAdversarialAgentCount("2.5")).toBeUndefined();
 	});
 
+	it("passes active non-mutating tools and the built-in read-only inspection tools to discussion agents", () => {
+		expect(
+			getAdversarialConversationToolNames(["read", "edit", "write", "research_pdf", "project_graph_search"]),
+		).toEqual(["read", "research_pdf", "project_graph_search", "bash", "grep", "find", "ls"]);
+	});
+
+	it("blocks mutating tools and non-read-only bash commands in spawned discussion agents", () => {
+		expect(guardAdversarialReadOnlyToolCall("read", { path: "README.md" })).toBeUndefined();
+		expect(guardAdversarialReadOnlyToolCall("bash", { command: "git status --short" })).toBeUndefined();
+		expect(guardAdversarialReadOnlyToolCall("edit", { path: "README.md" })).toEqual(
+			expect.objectContaining({ block: true }),
+		);
+		expect(guardAdversarialReadOnlyToolCall("bash", { command: "rm README.md" })).toEqual(
+			expect.objectContaining({ block: true }),
+		);
+	});
+
+	it("cancels the current response and retries the same turn with the interrupt in shared history", async () => {
+		let rejectCurrentResponse: ((error: Error) => void) | undefined;
+		const prompts: string[] = [];
+		const queuedInputs: string[] = [];
+		const agent1: AdversarialConversationAgent = {
+			async respond(prompt) {
+				prompts.push(prompt);
+				if (prompts.length > 1) return "response after interrupt";
+				return await new Promise<string>((_resolve, reject) => {
+					rejectCurrentResponse = reject;
+				});
+			},
+			async interrupt() {
+				rejectCurrentResponse?.(new AdversarialConversationInterruptedError());
+			},
+			async deliverUserInput() {},
+			async stop() {},
+		};
+		const agent2 = createFakeAgent("agent_2");
+
+		const resultPromise = runAdversarialConversationBatch({
+			goal: "Evaluate the numerical implementation",
+			participants: [
+				{ name: "agent_1", agent: agent1 },
+				{ name: "agent_2", agent: agent2 },
+			],
+			startTurn: 1,
+			turnCount: 1,
+			takeUserInputs: () => queuedInputs.splice(0),
+		});
+
+		await vi.waitFor(() => expect(prompts).toHaveLength(1));
+		queuedInputs.push("NaN 자체가 아니라 모델의 의미 보존을 논의해");
+		await agent1.interrupt();
+		const result = await resultPromise;
+
+		expect(result.turns).toEqual([{ turn: 1, speaker: "agent_1", text: "response after interrupt" }]);
+		expect(prompts).toHaveLength(2);
+		expect(prompts[1]).toContain('"speaker":"user"');
+		expect(prompts[1]).toContain("NaN 자체가 아니라 모델의 의미 보존을 논의해");
+	});
+
 	it("continues with accumulated discussion history and global turn number", async () => {
 		const agent1 = createFakeAgent("agent_1");
 		const agent2 = createFakeAgent("agent_2");
@@ -175,16 +241,42 @@ describe("adversarial conversation", () => {
 			options: { triggerTurn?: boolean } | undefined;
 		}> = [];
 		const agent1 = createFakeAgent("agent_1");
+		const deliveredBeforeRetry: string[] = [];
+		agent1.deliverUserInput = vi.fn(async () => {
+			deliveredBeforeRetry.push("agent_1");
+		});
+		let rejectAgent1Response: ((error: Error) => void) | undefined;
+		agent1.respond = async (prompt) => {
+			agent1.prompts.push(prompt);
+			if (agent1.prompts.length > 1) {
+				expect(deliveredBeforeRetry).toEqual(["agent_1", "agent_2", "agent_3"]);
+				return `agent_1-statement-${agent1.prompts.length - 1}`;
+			}
+			return await new Promise<string>((_resolve, reject) => {
+				rejectAgent1Response = reject;
+			});
+		};
+		agent1.interrupt = vi.fn(async () => {
+			rejectAgent1Response?.(new AdversarialConversationInterruptedError());
+		});
 		const agent2 = createFakeAgent("agent_2");
+		agent2.deliverUserInput = vi.fn(async () => {
+			deliveredBeforeRetry.push("agent_2");
+		});
 		const agent3 = createFakeAgent("agent_3");
+		agent3.deliverUserInput = vi.fn(async () => {
+			deliveredBeforeRetry.push("agent_3");
+		});
 		const agentsByName = new Map<AdversarialAgentName, AdversarialConversationAgent>([
 			["agent_1", agent1],
 			["agent_2", agent2],
 			["agent_3", agent3],
 		]);
+		const prepareDiscussionBrief = vi.fn(async () => "Verified shared discussion brief");
 		const createAgent = vi.fn(async (name: AdversarialAgentName) => agentsByName.get(name)!);
 		const cwd = await fs.promises.mkdtemp(path.join(os.tmpdir(), "pi-agent-discussion-test-"));
 		const extension = createAdversarialConversationExtension({
+			prepareDiscussionBrief,
 			createAgent,
 			getDefaultModelReference: () => "provider/default-model",
 		});
@@ -199,6 +291,9 @@ describe("adversarial conversation", () => {
 				name: string,
 				command: { handler: (args: string, ctx: ExtensionCommandContext) => Promise<void> },
 			) => commands.set(name, command.handler),
+			registerFlag: vi.fn(),
+			getFlag: vi.fn(() => false),
+			getActiveTools: () => ["read", "bash", "edit", "write", "research_pdf"],
 			sendMessage: (
 				message: { customType: string; content: unknown },
 				options: { triggerTurn?: boolean } | undefined,
@@ -225,7 +320,7 @@ describe("adversarial conversation", () => {
 		const ctx = {
 			hasUI: true,
 			cwd,
-			model: undefined,
+			model: { provider: "provider", id: "main-model" },
 			sessionManager: {
 				getSessionId: () => "session-test",
 				buildContextEntries: () => [
@@ -261,12 +356,18 @@ describe("adversarial conversation", () => {
 		if (!command) throw new Error("Missing adversarial conversation command");
 		const commandPromise = command("prefilled goal", ctx);
 		await vi.waitFor(() => expect(ctx.waitForIdle).toHaveBeenCalledTimes(1));
-		await commands.get("interrupt")?.("사용자 개입을 두 관점에서 검토해", ctx);
-		expect(ctx.ui.notify).toHaveBeenCalledWith("Discussion interrupt queued for all agents.", "info");
-		expect(sentMessages.some(({ message }) => message.customType === "adversarial-conversation-user-input")).toBe(
-			false,
-		);
 		releaseIdle();
+		await vi.waitFor(() => expect(agent1.prompts).toHaveLength(1));
+		await commands.get("interrupt")?.("사용자 개입을 두 관점에서 검토해", ctx);
+		expect(agent1.interrupt).toHaveBeenCalledTimes(1);
+		expect(ctx.ui.notify).toHaveBeenCalledWith("User message delivered to all 3 discussion agents.", "info");
+		expect(agent1.deliverUserInput).toHaveBeenCalledWith("사용자 개입을 두 관점에서 검토해");
+		expect(agent2.deliverUserInput).toHaveBeenCalledWith("사용자 개입을 두 관점에서 검토해");
+		expect(agent3.deliverUserInput).toHaveBeenCalledWith("사용자 개입을 두 관점에서 검토해");
+		const immediatelyDisplayedInput = sentMessages.find(
+			({ message }) => message.customType === "adversarial-conversation-user-input",
+		);
+		expect(immediatelyDisplayedInput?.message.content).toContain("사용자 개입을 두 관점에서 검토해");
 		await commandPromise;
 
 		expect(editor).toHaveBeenCalledTimes(3);
@@ -297,29 +398,41 @@ describe("adversarial conversation", () => {
 		]);
 		const expectedPriorContext =
 			"[User]\nExisting projection discussion context\n\n[Main agent]\nInspected service layer";
+		expect(prepareDiscussionBrief).toHaveBeenCalledTimes(1);
+		expect(prepareDiscussionBrief).toHaveBeenCalledWith(
+			"Evaluate proposal X",
+			cwd,
+			{ provider: "provider", id: "main-model" },
+			expectedPriorContext,
+			["read", "bash", "research_pdf", "grep", "find", "ls"],
+			expect.any(Function),
+		);
 		expect(createAgent).toHaveBeenNthCalledWith(
 			1,
 			"agent_1",
 			"Evaluate proposal X",
 			cwd,
-			"provider/agent-1-model",
-			expectedPriorContext,
+			expect.objectContaining({ provider: "provider", id: "agent-1-model" }),
+			"Verified shared discussion brief",
+			["read", "bash", "research_pdf", "grep", "find", "ls"],
 		);
 		expect(createAgent).toHaveBeenNthCalledWith(
 			2,
 			"agent_2",
 			"Evaluate proposal X",
 			cwd,
-			"provider/agent-2-model",
-			expectedPriorContext,
+			expect.objectContaining({ provider: "provider", id: "agent-2-model" }),
+			"Verified shared discussion brief",
+			["read", "bash", "research_pdf", "grep", "find", "ls"],
 		);
 		expect(createAgent).toHaveBeenNthCalledWith(
 			3,
 			"agent_3",
 			"Evaluate proposal X",
 			cwd,
-			"provider/agent-3-model",
-			expectedPriorContext,
+			expect.objectContaining({ provider: "provider", id: "agent-3-model" }),
+			"Verified shared discussion brief",
+			["read", "bash", "research_pdf", "grep", "find", "ls"],
 		);
 		expect(agent1.prompts.some((prompt) => prompt.includes("사용자 개입을 두 관점에서 검토해"))).toBe(true);
 		expect(agent2.prompts.some((prompt) => prompt.includes("사용자 개입을 두 관점에서 검토해"))).toBe(true);
@@ -356,16 +469,6 @@ describe("adversarial conversation", () => {
 				(call) => Array.isArray(call[1]) && call[1][0] === "⠋ agent_1 (provider/agent-1-model) · turn 1 · running",
 			),
 		).toBe(true);
-		expect(
-			runningWidgets.some(
-				(call) => Array.isArray(call[1]) && call[1][0] === "⠋ agent_2 (provider/agent-2-model) · turn 2 · running",
-			),
-		).toBe(true);
-		expect(
-			runningWidgets.some(
-				(call) => Array.isArray(call[1]) && call[1][0] === "⠋ agent_3 (provider/agent-3-model) · turn 3 · running",
-			),
-		).toBe(true);
 		expect(runningWidgets[0]?.[2]).toEqual({ placement: "aboveEditor" });
 		const helpWidgets = vi
 			.mocked(ctx.ui.setWidget)
@@ -373,6 +476,25 @@ describe("adversarial conversation", () => {
 		expect(helpWidgets[0]?.[1]).toEqual(["use /interrupt <message> to send input to all discussion agents"]);
 		expect(helpWidgets[0]?.[2]).toEqual({ placement: "aboveEditor" });
 		expect(helpWidgets.at(-1)?.[1]).toBeUndefined();
+		const interruptWidgets = vi
+			.mocked(ctx.ui.setWidget)
+			.mock.calls.filter((call) => call[0] === "adversarial-conversation-interrupt");
+		expect(
+			interruptWidgets.some(
+				(call) =>
+					Array.isArray(call[1]) &&
+					call[1][0] === "[interrupting] 사용자 개입을 두 관점에서 검토해" &&
+					call[2]?.placement === "aboveEditor",
+			),
+		).toBe(true);
+		expect(
+			interruptWidgets.some(
+				(call) =>
+					Array.isArray(call[1]) &&
+					call[1][0] === "[delivered] 사용자 개입을 두 관점에서 검토해" &&
+					call[2]?.placement === "aboveEditor",
+			),
+		).toBe(true);
 		const handoff = sentMessages.find(({ message }) => message.customType === "adversarial-conversation-handoff");
 		expect(handoff?.options).toEqual({ triggerTurn: true });
 
@@ -381,6 +503,7 @@ describe("adversarial conversation", () => {
 		expect(discussionFiles).toHaveLength(1);
 		const transcript = await fs.promises.readFile(path.join(discussionDirectory, discussionFiles[0]!), "utf8");
 		expect(transcript).toContain("## Goal\n\nEvaluate proposal X");
+		expect(transcript).toContain("## Main-agent discussion brief\n\nVerified shared discussion brief");
 		expect(transcript).toContain("### user · before turn 1\n\n사용자 개입을 두 관점에서 검토해");
 		expect(transcript).toContain("### agent_1 (provider/agent-1-model) · turn 1");
 		expect(transcript).toContain("### agent_1 (provider/agent-1-model) · turn 7");

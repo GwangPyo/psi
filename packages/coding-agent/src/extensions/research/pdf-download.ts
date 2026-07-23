@@ -53,14 +53,14 @@ async function readResponseBody(response: Response): Promise<Buffer> {
 
 async function downloadOne(
 	cwd: string,
-	workspace: ResearchWorkspace,
+	destinationDirectory: string,
 	request: PdfDownloadRequest,
 	signal?: AbortSignal,
 ): Promise<PdfDownloadResult> {
 	const requestedUrl = new URL(request.url);
 	if (requestedUrl.protocol !== "https:") throw new Error("Only HTTPS PDF URLs are allowed");
 	const fileName = pdfFileName(request);
-	const destination = path.join(workspace.absolutePath, "papers", fileName);
+	const destination = path.join(destinationDirectory, fileName);
 	const relativeDestination = path.relative(cwd, destination);
 	const existing = await fs.promises.stat(destination).catch(() => undefined);
 	if (existing?.isFile()) return { ...request, path: relativeDestination, bytes: existing.size };
@@ -75,7 +75,7 @@ async function downloadOne(
 	const body = await readResponseBody(response);
 	if (body.subarray(0, 5).toString("ascii") !== "%PDF-") throw new Error("Downloaded response is not a PDF");
 
-	const temporary = path.join(workspace.absolutePath, "papers", `.${fileName}.${randomUUID()}.tmp`);
+	const temporary = path.join(destinationDirectory, `.${fileName}.${randomUUID()}.tmp`);
 	await fs.promises.writeFile(temporary, body, { flag: "wx" });
 	try {
 		await fs.promises.rename(temporary, destination);
@@ -92,13 +92,46 @@ export async function downloadResearchPdfs(
 	requests: readonly PdfDownloadRequest[],
 	signal?: AbortSignal,
 ): Promise<PdfDownloadResult[]> {
+	return downloadPdfsToDirectory(cwd, path.join(workspace.absolutePath, "papers"), requests, signal);
+}
+
+export async function downloadPdfsToDirectory(
+	cwd: string,
+	destinationDirectory: string,
+	requests: readonly PdfDownloadRequest[],
+	signal?: AbortSignal,
+): Promise<PdfDownloadResult[]> {
+	await fs.promises.mkdir(destinationDirectory, { recursive: true });
 	return await Promise.all(
 		requests.map(async (request) => {
 			try {
-				return await downloadOne(cwd, workspace, request, signal);
+				return await downloadOne(cwd, destinationDirectory, request, signal);
 			} catch (error) {
 				return { ...request, error: error instanceof Error ? error.message : String(error) };
 			}
 		}),
 	);
+}
+
+export async function promoteResearchPdf(
+	cwd: string,
+	workspace: ResearchWorkspace,
+	temporaryPdfPath: string,
+	request: PdfDownloadRequest,
+): Promise<string> {
+	const destinationDirectory = path.join(workspace.absolutePath, "papers");
+	await fs.promises.mkdir(destinationDirectory, { recursive: true });
+	const destination = path.join(destinationDirectory, pdfFileName(request));
+	const existing = await fs.promises.stat(destination).catch(() => undefined);
+	if (!existing?.isFile()) {
+		const stagedDestination = `${destination}.${randomUUID()}.tmp`;
+		await fs.promises.copyFile(temporaryPdfPath, stagedDestination, fs.constants.COPYFILE_EXCL);
+		try {
+			await fs.promises.rename(stagedDestination, destination);
+		} catch (error) {
+			await fs.promises.rm(stagedDestination, { force: true });
+			throw error;
+		}
+	}
+	return path.relative(cwd, destination);
 }

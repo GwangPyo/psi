@@ -4,12 +4,20 @@
 
 ### Added
 
+- Added incremental nonlinear plan-guide authoring with retained sequence, parallel, choice, revision, and final topology operations.
+- Added an editable project-root `system_prompt.md` for persistent prompt content, with request-time active tool catalogs, guided tools executed by isolated single-tool subagents, and explicit regeneration through `/init` and `/rebuild_sysprompt`.
+- Added minimal-change implementation discipline to generated default system prompts and an optional implementation Grill before `/plan` drafting.
 - Added core extension package management through `/manage_extension` and a bundled model-facing MCP tool, including npm `pi-package` search and automatic resource reload after mutations.
 - Added highest-priority `subagentDefaultModel` settings support and a `/subagent-model` selector command to the bundled subagent extension, including trusted project-setting support.
 - Added the `backgroundAgentDefaultModel` setting and `/background-agent-model` selector for independent low-cost background work.
 - Added agy-compatible Google Antigravity login and dynamically discovered Cloud Code Assist models through the built-in `google-gemini-cli` provider.
-- Added durable per-session transcripts, accumulated debate context, and automatic main-agent handoff to the bundled adversarial conversation extension.
+- Added durable per-session transcripts, a one-time main-model evidence brief, isolated in-process agents that reuse the current model runtime and registered read-only tools without restarting Pi or MCP servers, cancellable live user interrupts, accumulated debate context, and automatic main-agent handoff to the bundled adversarial conversation extension.
 - Added a modular research extension with `/collect_papers`, `/extract_papers`, and `/research_status`, project-local paper/evidence workspaces, verified batch PDF downloads, SubAgent evidence extraction, and low-cost BackgroundAgent progress hooks.
+
+### Fixed
+
+- Fixed extension-triggered runs skipping `before_agent_start`, and made PlanFSM execution continue a running frontier, settle structural transitions automatically, and block repeated no-progress runs.
+- Kept ordinary interactive output above the prompt editor, including chat and tool results, notifications, queued output, and statuses. Explicit `belowEditor` extension widgets remain below it, and animated text widgets now update in place without rebuilding the surrounding layout.
 
 ## [0.81.1] - 2026-07-21
 

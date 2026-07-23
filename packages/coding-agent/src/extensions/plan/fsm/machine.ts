@@ -63,6 +63,7 @@ export class PlanFSM {
 			activeStateIdsAfter: [...this.runtime.activeStateIds],
 			timestamp,
 		});
+		this.settleAutomaticTransitions(timestamp);
 		return this.snapshot;
 	}
 
@@ -145,8 +146,17 @@ export class PlanFSM {
 			timestamp: options.timestamp ?? Date.now(),
 		});
 		this.updateTerminalStatus();
+		if (event !== "AUTO") this.settleAutomaticTransitions(options.timestamp ?? Date.now());
 
 		return { appliedTransitionIds: selected.map((transition) => transition.id), snapshot: this.snapshot };
+	}
+
+	private settleAutomaticTransitions(timestamp: number): void {
+		while (this.runtime.status === "running") {
+			const before = this.runtime.transitionCount;
+			const result = this.dispatch("AUTO", { timestamp });
+			if (result.appliedTransitionIds.length === 0 || this.runtime.transitionCount === before) return;
+		}
 	}
 
 	private createInitialSnapshot(): PlanRuntimeSnapshot {

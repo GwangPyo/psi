@@ -81,6 +81,12 @@ describe("ExtensionRunner", () => {
 		getActiveTools: () => [],
 		getAllTools: () => [],
 		setActiveTools: () => {},
+		spawnAgent: () => ({
+			prompt: async () => "",
+			abort: async () => {},
+			appendUserMessage: async () => {},
+			dispose: () => {},
+		}),
 		refreshTools: () => {},
 		getCommands: () => [],
 		setModel: async () => false,
@@ -484,6 +490,26 @@ describe("ExtensionRunner", () => {
 	});
 
 	describe("context creation", () => {
+		it("binds in-process agent spawning into the shared extension runtime", async () => {
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+			const spawned = {
+				prompt: async () => "done",
+				abort: async () => {},
+				appendUserMessage: async () => {},
+				dispose: () => {},
+			};
+			const spawnAgent = vi.fn(() => spawned);
+			runner.bindCore({ ...extensionActions, spawnAgent }, extensionContextActions);
+			const options = {
+				model: { provider: "test", id: "model" } as never,
+				systemPrompt: "isolated",
+			};
+
+			expect(result.runtime.spawnAgent(options)).toBe(spawned);
+			expect(spawnAgent).toHaveBeenCalledWith(options);
+		});
+
 		it("exposes the current abort signal on ExtensionContext", async () => {
 			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
 			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);

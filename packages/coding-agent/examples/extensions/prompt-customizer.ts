@@ -4,8 +4,9 @@
  * Demonstrates using systemPromptOptions to make informed, context-aware
  * modifications to the system prompt without re-discovering resources.
  *
- * This extension adds tool-specific guidance based on what tools and skills
- * are currently active, respecting whatever the user has configured.
+ * This extension adds project context based on the skills currently loaded,
+ * respecting whatever the user has configured. Tool catalogs and guidance are
+ * managed by the runtime and should not be copied into a prompt override.
  *
  * Usage:
  * 1. Copy this file to ~/.pi/agent/extensions/ or your project's .pi/extensions/
@@ -15,50 +16,17 @@
 import type { BuildSystemPromptOptions, ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 /**
- * Adds tool-specific guidance that adapts to the active tool set.
- * Instead of appending one-size-fits-all instructions, this reads what's
- * actually loaded and tailors the guidance accordingly.
+ * Adds skill context from the resources already loaded for this project.
  */
-function addToolGuidance(options: BuildSystemPromptOptions, basePrompt: string): string {
-	const hasTool = (name: string) => options.selectedTools?.includes(name) ?? false;
-
-	const parts: string[] = [];
-
-	if (hasTool("read")) {
-		parts.push(
-			"• Use the `read` tool for file contents (supports text and images).",
-			"  - For large files, use `offset` and `limit` to read in chunks.",
-		);
-	}
-
-	if (hasTool("bash")) {
-		parts.push("• Execute commands with the `bash` tool. Use it for file operations like `ls`, `find`, `grep`.");
-	}
-
-	if (hasTool("edit")) {
-		parts.push(
-			"• Use the `edit` tool for precise text replacements in files. Match exact content including whitespace.",
-		);
-	}
-
-	if (hasTool("write")) {
-		parts.push("• Use the `write` tool to create new files or overwrite existing ones completely.");
-	}
-
-	if (options.skills && options.skills.length > 0) {
-		const skillNames = options.skills.map((s) => s.name).join(", ");
-		parts.push(`\nAvailable skills: ${skillNames}`, "Use skill documentation for best practices on specific tools.");
-	}
-
-	if (parts.length === 0) {
-		return basePrompt;
-	}
+function addSkillContext(options: BuildSystemPromptOptions, basePrompt: string): string {
+	if (!options.skills || options.skills.length === 0) return basePrompt;
+	const skillNames = options.skills.map((skill) => skill.name).join(", ");
 
 	return `${basePrompt}
 
-## Tool Guidance
+## Loaded Skill Context
 
-${parts.join("\n")}
+Project skills available: ${skillNames}
 `;
 }
 
@@ -72,7 +40,7 @@ function mergeWithUserAppend(options: BuildSystemPromptOptions): string {
 	const extensionSpecific = `
 ## Extension-Added Context
 
-This prompt includes tool guidance and skill information loaded dynamically.
+This prompt includes project context loaded dynamically.
 If you have additional requirements, configure them via --append-system-prompt or project context files.
 `;
 
@@ -87,7 +55,7 @@ export default function promptCustomizer(pi: ExtensionAPI) {
 	pi.on("before_agent_start", async (event) => {
 		const { systemPrompt, systemPromptOptions } = event;
 
-		const customPrompt = addToolGuidance(systemPromptOptions, systemPrompt);
+		const customPrompt = addSkillContext(systemPromptOptions, systemPrompt);
 		const appendSection = mergeWithUserAppend(systemPromptOptions);
 
 		return {

@@ -1,4 +1,4 @@
-import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
+import { type Context, fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
 import type { ExtensionFactory } from "../../../src/index.ts";
@@ -61,6 +61,74 @@ describe("extension active tools next-turn refresh", () => {
 
 			expect(harness.session.getActiveToolNames()).toEqual(["after_switch"]);
 			expect(providerToolNames).toEqual([["switch_tools"], ["after_switch"]]);
+		} finally {
+			harness.cleanup();
+		}
+	});
+
+	it("lets an isolated subagent execute a selected guided tool without exposing guidance to the main agent", async () => {
+		let executions = 0;
+		const extensionFactories: ExtensionFactory[] = [
+			(pi) => {
+				pi.registerTool({
+					name: "guided_tool",
+					label: "Guided Tool",
+					description: "Run the guided operation",
+					promptSnippet: "Run the guided operation",
+					promptGuidelines: ["Inspect the guided result before deciding the next step."],
+					parameters: Type.Object({}),
+					execute: async () => {
+						executions++;
+						return {
+							content: [{ type: "text", text: "guided" }],
+							details: {},
+						};
+					},
+				});
+			},
+		];
+		const harness = await createHarness({ extensionFactories });
+
+		try {
+			harness.session.setActiveToolsByName(["guided_tool"]);
+			const providerRequests: Array<{ systemPrompt: string; tools: string[]; toolResults: string[] }> = [];
+			const recordRequest = (context: Context) => {
+				providerRequests.push({
+					systemPrompt: context.systemPrompt ?? "",
+					tools: (context.tools ?? []).map((tool) => tool.name),
+					toolResults: context.messages
+						.filter((message) => message.role === "toolResult")
+						.flatMap((message) => (Array.isArray(message.content) ? message.content : []))
+						.filter((part) => part.type === "text")
+						.map((part) => part.text ?? ""),
+				});
+			};
+			harness.setResponses([
+				(context) => {
+					recordRequest(context);
+					return fauxAssistantMessage(fauxToolCall("guided_tool", {}), { stopReason: "toolUse" });
+				},
+				(context) => {
+					recordRequest(context);
+					return fauxAssistantMessage(fauxToolCall("guided_tool", {}), { stopReason: "toolUse" });
+				},
+				(context) => {
+					recordRequest(context);
+					return fauxAssistantMessage("done");
+				},
+			]);
+
+			await harness.session.prompt("start");
+
+			expect(providerRequests).toHaveLength(3);
+			expect(providerRequests[0].systemPrompt).toContain("- guided_tool: Run the guided operation");
+			expect(providerRequests[0].systemPrompt).not.toContain("Inspect the guided result");
+			expect(providerRequests[1].tools).toEqual(["guided_tool"]);
+			expect(providerRequests[1].systemPrompt).toContain('<tool_guidance tool="guided_tool">');
+			expect(providerRequests[1].systemPrompt).toContain("Inspect the guided result before deciding the next step.");
+			expect(providerRequests[2].systemPrompt).not.toContain("Inspect the guided result");
+			expect(providerRequests[2].toolResults).toContain("guided");
+			expect(executions).toBe(1);
 		} finally {
 			harness.cleanup();
 		}
@@ -185,6 +253,10 @@ describe("extension active tools next-turn refresh", () => {
 			expect(providerSystemPrompts).toHaveLength(2);
 			expect(providerSystemPrompts[0]).toContain("keep this run override");
 			expect(providerSystemPrompts[1]).toContain("keep this run override");
+			expect(providerSystemPrompts[0]).toContain("- switch_tools:");
+			expect(providerSystemPrompts[0]).not.toContain("- after_switch:");
+			expect(providerSystemPrompts[1]).toContain("- after_switch:");
+			expect(providerSystemPrompts[1]).not.toContain("- switch_tools:");
 		} finally {
 			harness.cleanup();
 		}

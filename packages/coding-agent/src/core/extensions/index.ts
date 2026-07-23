@@ -142,6 +142,9 @@ export type {
 	SetLabelHandler,
 	SetModelHandler,
 	SetThinkingLevelHandler,
+	SpawnAgentHandler,
+	SpawnAgentOptions,
+	SpawnedAgent,
 	TerminalInputHandler,
 	// Events - Tool
 	ToolCallEvent,

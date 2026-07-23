@@ -65,6 +65,101 @@ function normalizeRenderedOutput(container: Container, width = 220): string {
 		.trim();
 }
 
+describe("InteractiveMode main layout", () => {
+	test("mounts ordinary output before the editor and preserves the explicit belowEditor band", () => {
+		const mounted: unknown[] = [];
+		const parts = {
+			headerContainer: {},
+			loadedResourcesContainer: {},
+			chatContainer: {},
+			pendingMessagesContainer: {},
+			statusContainer: {},
+			widgetContainerAbove: {},
+			widgetContainerBelow: {},
+			editorContainer: {},
+			footer: {},
+		};
+		const fakeThis: any = {
+			...parts,
+			ui: { addChild: (component: unknown) => mounted.push(component) },
+			renderWidgets: vi.fn(),
+		};
+
+		(InteractiveMode as any).prototype.mountMainLayout.call(fakeThis);
+
+		expect(mounted).toEqual([
+			parts.headerContainer,
+			parts.loadedResourcesContainer,
+			parts.chatContainer,
+			parts.pendingMessagesContainer,
+			parts.statusContainer,
+			parts.widgetContainerAbove,
+			parts.editorContainer,
+			parts.widgetContainerBelow,
+			parts.footer,
+		]);
+		expect(fakeThis.renderWidgets).toHaveBeenCalledOnce();
+	});
+});
+
+describe("InteractiveMode extension widgets", () => {
+	test("updates string widgets in place without rebuilding the widget layout", () => {
+		const fakeThis: any = {
+			extensionWidgetsAbove: new Map(),
+			extensionWidgetsBelow: new Map(),
+			renderWidgets: vi.fn(),
+			ui: { requestRender: vi.fn() },
+		};
+		const setWidget = (InteractiveMode as any).prototype.setExtensionWidget;
+
+		setWidget.call(fakeThis, "animated-status", ["⠋ preparing"], { placement: "aboveEditor" });
+		const initialWidget = fakeThis.extensionWidgetsAbove.get("animated-status");
+		setWidget.call(fakeThis, "animated-status", ["⠙ preparing"], { placement: "aboveEditor" });
+
+		expect(fakeThis.extensionWidgetsAbove.get("animated-status")).toBe(initialWidget);
+		expect(initialWidget.render(80).join("\n")).toContain("⠙ preparing");
+		expect(fakeThis.renderWidgets).toHaveBeenCalledTimes(1);
+		expect(fakeThis.ui.requestRender).toHaveBeenCalledTimes(1);
+	});
+});
+
+describe("InteractiveMode adversarial interrupt dispatch", () => {
+	test("executes /interrupt immediately while adversarial_discussion owns the command turn", async () => {
+		const prompt = vi.fn(async () => {});
+		const editor = {
+			onSubmit: undefined as ((text: string) => Promise<void>) | undefined,
+			addToHistory: vi.fn(),
+			setText: vi.fn(),
+		};
+		const fakeThis: any = {
+			defaultEditor: editor,
+			editor,
+			session: {
+				isExtensionCommandRunning: (name: string) => name === "adversarial_discussion",
+				prompt,
+			},
+			isAdversarialInterruptCommand: (InteractiveMode as any).prototype.isAdversarialInterruptCommand,
+			isExtensionCommand: (text: string) => text.startsWith("/interrupt"),
+		};
+
+		(InteractiveMode as any).prototype.setupEditorSubmitHandler.call(fakeThis);
+		await editor.onSubmit?.("/interrupt focus on the user's correction");
+
+		expect(prompt).toHaveBeenCalledWith("/interrupt focus on the user's correction");
+		expect(editor.setText).toHaveBeenCalledWith("");
+		expect(editor.addToHistory).toHaveBeenCalledWith("/interrupt focus on the user's correction");
+	});
+
+	test("does not classify unrelated slash commands as adversarial interrupts", () => {
+		const fakeThis: any = { isExtensionCommand: () => true };
+		const classify = (InteractiveMode as any).prototype.isAdversarialInterruptCommand;
+
+		expect(classify.call(fakeThis, "/interrupt correction")).toBe(true);
+		expect(classify.call(fakeThis, "/reload")).toBe(false);
+		expect(classify.call(fakeThis, "/plan")).toBe(false);
+	});
+});
+
 type ExtensionFixture = {
 	path: string;
 	sourceInfo?: SourceInfo;

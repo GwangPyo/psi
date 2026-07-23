@@ -156,6 +156,53 @@ describe("PlanFSM", () => {
 		expect(fsm.dispatch("SUCCESS").snapshot.status).toBe("completed");
 	});
 
+	it("settles structural AUTO transitions without an agent control turn", () => {
+		const definition = machine(
+			[
+				state("fork", "fork"),
+				state("backend"),
+				state("frontend"),
+				state("backend-done", "checkpoint"),
+				state("frontend-done", "checkpoint"),
+				state("join", "join"),
+				state("verify"),
+				state("done", "final"),
+			],
+			[
+				{ id: "split", from: ["fork"], to: ["backend", "frontend"], event: "AUTO" },
+				{ id: "backend-complete", from: ["backend"], to: ["backend-done"], event: "SUCCESS" },
+				{ id: "frontend-complete", from: ["frontend"], to: ["frontend-done"], event: "SUCCESS" },
+				{ id: "join-branches", from: ["backend-done", "frontend-done"], to: ["join"], event: "AUTO" },
+				{ id: "start-verification", from: ["join"], to: ["verify"], event: "AUTO" },
+				{ id: "verified", from: ["verify"], to: ["done"], event: "SUCCESS" },
+			],
+			{
+				parallelism: {
+					strategy: "parallel",
+					rationale: "Backend and frontend consume independent inputs and can progress concurrently.",
+					independentStateGroups: [["backend", "frontend"]],
+				},
+			},
+		);
+		const fsm = new PlanFSM(definition);
+
+		expect(fsm.start().activeStateIds).toEqual(["backend", "frontend"]);
+		expect(fsm.dispatch("SUCCESS", { sourceStateId: "backend" }).snapshot.activeStateIds).toEqual([
+			"backend-done",
+			"frontend",
+		]);
+		const joined = fsm.dispatch("SUCCESS", { sourceStateId: "frontend" });
+		expect(joined.snapshot.activeStateIds).toEqual(["verify"]);
+		expect(joined.snapshot.history.map((record) => record.event)).toEqual([
+			"START",
+			"AUTO",
+			"SUCCESS",
+			"SUCCESS",
+			"AUTO",
+			"AUTO",
+		]);
+	});
+
 	it("supports bounded loops and blocks when a state visit limit is exceeded", () => {
 		const work = { ...state("work"), maxVisits: 2 };
 		const definition = machine(

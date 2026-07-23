@@ -52,6 +52,7 @@ export const PlanStateSchema = Type.Object({
 		Type.Literal("choice"),
 		Type.Literal("fork"),
 		Type.Literal("join"),
+		Type.Literal("checkpoint"),
 		Type.Literal("final"),
 	]),
 	title: NonEmptyString,
