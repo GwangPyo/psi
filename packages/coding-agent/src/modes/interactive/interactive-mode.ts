@@ -2877,11 +2877,6 @@ export class InteractiveMode {
 				await this.handleCompactCommand(customInstructions);
 				return;
 			}
-			if (text === "/init" || text === "/rebuild_sysprompt") {
-				this.editor.setText("");
-				await this.handleReloadCommand(true);
-				return;
-			}
 			if (text === "/reload") {
 				this.editor.setText("");
 				await this.handleReloadCommand();
@@ -5713,7 +5708,7 @@ export class InteractiveMode {
 	// Command handlers
 	// =========================================================================
 
-	private async handleReloadCommand(rebuildSystemPrompt = false): Promise<void> {
+	private async handleReloadCommand(): Promise<void> {
 		if (this.session.isStreaming) {
 			this.showWarning("Wait for the current response to finish before reloading.");
 			return;
@@ -5731,12 +5726,7 @@ export class InteractiveMode {
 		reloadBox.addChild(new Spacer(1));
 		reloadBox.addChild(
 			new Text(
-				theme.fg(
-					"muted",
-					rebuildSystemPrompt
-						? "Reloading project resources and rebuilding system_prompt.md..."
-						: "Reloading keybindings, extensions, skills, prompts, themes, and context files...",
-				),
+				theme.fg("muted", "Reloading keybindings, extensions, skills, prompts, themes, and context files..."),
 				1,
 				0,
 			),
@@ -5772,7 +5762,6 @@ export class InteractiveMode {
 
 		try {
 			await this.session.reload({ beforeSessionStart: restoreChatBeforeSessionStart });
-			const rebuiltSystemPromptPath = rebuildSystemPrompt ? this.session.rebuildProjectSystemPrompt() : undefined;
 			restoreChatBeforeSessionStart();
 			configureHttpDispatcher(this.settingsManager.getHttpIdleTimeoutMs());
 			this.keybindings.reload();
@@ -5809,11 +5798,9 @@ export class InteractiveMode {
 				this.showError(`models.json error: ${modelsJsonError}`);
 			}
 			this.showStatus(
-				rebuiltSystemPromptPath
-					? `Rebuilt and applied ${rebuiltSystemPromptPath}`
-					: savedImplicitProjectTrust
-						? "Reloaded keybindings, extensions, skills, prompts, themes, and context files; saved project trust"
-						: "Reloaded keybindings, extensions, skills, prompts, themes, and context files",
+				savedImplicitProjectTrust
+					? "Reloaded keybindings, extensions, skills, prompts, themes, and context files; saved project trust"
+					: "Reloaded keybindings, extensions, skills, prompts, themes, and context files",
 			);
 			dismissReloadBox(this.editor as Component);
 			reloadBoxDismissed = true;

@@ -107,16 +107,12 @@ Use context files for project conventions, commands, safety rules, and preferenc
 
 ### System Prompt Files
 
-Pi uses `system_prompt.md` in the current working directory for the persistent part of the system prompt. If the file is absent, startup generates it from static inputs such as skills and project context. The active tool catalog is derived from the tools enabled for the current provider request and is appended in memory, not written to the file. When a selected tool has tool-specific guidance, an isolated single-tool subagent receives that guidance, executes the tool, and returns the ordinary tool result to the main agent. Edit the file and run `/reload` to apply static prompt changes.
-
-`/init` and `/rebuild_sysprompt` first reload project resources, then explicitly replace the file with a fresh logic-generated prompt and apply it to the current session. Ordinary `/reload` preserves the file.
-
-The following legacy inputs seed the first generated file:
+Replace the default system prompt with:
 
 - `.pi/SYSTEM.md` for a project
 - `~/.pi/agent/SYSTEM.md` globally
 
-`APPEND_SYSTEM.md` in either location is also included during initial generation. Once `system_prompt.md` exists, it is authoritative for persistent content and is never overwritten by regenerated defaults; request-time tool metadata remains dynamic.
+Append to the default prompt without replacing it with `APPEND_SYSTEM.md` in either location. The active tool catalog is derived from the tools enabled for the current provider request. When a selected tool has tool-specific guidance, an isolated single-tool subagent receives that guidance and executes the call.
 
 ### Project Trust
 

@@ -13,10 +13,6 @@ export const FIREWORKS_MODELS = values as {
 		id: "accounts/fireworks/models/deepseek-v4-pro";
 		provider: "fireworks";
 	};
-	"accounts/fireworks/models/glm-5p1": Model<"anthropic-messages"> & {
-		id: "accounts/fireworks/models/glm-5p1";
-		provider: "fireworks";
-	};
 	"accounts/fireworks/models/glm-5p2": Model<"openai-completions"> & {
 		id: "accounts/fireworks/models/glm-5p2";
 		provider: "fireworks";
@@ -47,10 +43,6 @@ export const FIREWORKS_MODELS = values as {
 	};
 	"accounts/fireworks/models/qwen3p7-plus": Model<"anthropic-messages"> & {
 		id: "accounts/fireworks/models/qwen3p7-plus";
-		provider: "fireworks";
-	};
-	"accounts/fireworks/routers/glm-5p1-fast": Model<"anthropic-messages"> & {
-		id: "accounts/fireworks/routers/glm-5p1-fast";
 		provider: "fireworks";
 	};
 	"accounts/fireworks/routers/glm-5p2-fast": Model<"openai-completions"> & {

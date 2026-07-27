@@ -2,44 +2,7 @@
  * System prompt construction and project context loading
  */
 
-import { readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { formatSkillsForPrompt, type Skill } from "./skills.ts";
-
-export const PROJECT_SYSTEM_PROMPT_FILENAME = "system_prompt.md";
-
-export function getProjectSystemPromptPath(cwd: string): string {
-	return join(cwd, PROJECT_SYSTEM_PROMPT_FILENAME);
-}
-
-function isFileSystemError(error: unknown, code: string): boolean {
-	return error instanceof Error && "code" in error && error.code === code;
-}
-
-/** Read the editable project system prompt, creating it atomically from the generated default when absent. */
-export function loadOrCreateProjectSystemPrompt(cwd: string, generatedDefault: string): string {
-	const promptPath = getProjectSystemPromptPath(cwd);
-	try {
-		return readFileSync(promptPath, "utf8");
-	} catch (error) {
-		if (!isFileSystemError(error, "ENOENT")) throw error;
-	}
-
-	try {
-		writeFileSync(promptPath, generatedDefault, { encoding: "utf8", flag: "wx" });
-		return generatedDefault;
-	} catch (error) {
-		if (isFileSystemError(error, "EEXIST")) return readFileSync(promptPath, "utf8");
-		throw error;
-	}
-}
-
-/** Explicitly replace the editable project system prompt with a newly generated prompt. */
-export function writeProjectSystemPrompt(cwd: string, generatedPrompt: string): string {
-	const promptPath = getProjectSystemPromptPath(cwd);
-	writeFileSync(promptPath, generatedPrompt, "utf8");
-	return promptPath;
-}
 
 export interface RuntimeToolPrompt {
 	name: string;
@@ -54,7 +17,7 @@ function escapeXml(text: string): string {
 	return text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
 }
 
-/** Add the authoritative tool catalog for the current provider request without persisting it in system_prompt.md. */
+/** Add the authoritative tool catalog for the current provider request. */
 export function injectRuntimeTools(
 	basePrompt: string,
 	tools: RuntimeToolPrompt[],
@@ -100,7 +63,7 @@ export interface BuildSystemPromptOptions {
 	skills?: Skill[];
 }
 
-/** Build the persistent system prompt. Runtime tool metadata is injected separately at the provider boundary. */
+/** Build the system prompt. Runtime tool metadata is injected separately at the provider boundary. */
 export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 	const {
 		customPrompt,
@@ -168,7 +131,6 @@ Guidelines:
 
 Implementation discipline:
 - Understand the request and trace the relevant existing flow before choosing a change.
-- Focus on the 
 - Use the first sufficient option: avoid building it, reuse repository code, use the standard library or native platform, use an already-installed dependency, then write the minimum new code.
 - Fix root causes at the shared seam instead of patching one reported symptom when sibling paths have the same defect.
 - Avoid speculative abstractions, dependencies, boilerplate, and files. Prefer deletion and straightforward code.

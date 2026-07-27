@@ -1,49 +1,5 @@
-import * as fs from "node:fs";
-import * as os from "node:os";
-import * as path from "node:path";
 import { describe, expect, test } from "vitest";
-import {
-	buildSystemPrompt,
-	injectRuntimeTools,
-	injectToolGuidance,
-	loadOrCreateProjectSystemPrompt,
-	PROJECT_SYSTEM_PROMPT_FILENAME,
-	writeProjectSystemPrompt,
-} from "../src/core/system-prompt.ts";
-
-describe("project system prompt", () => {
-	test("creates system_prompt.md from the generated default and returns the same content", async () => {
-		const cwd = await fs.promises.mkdtemp(path.join(os.tmpdir(), "pi-system-prompt-test-"));
-		const generated = "generated default prompt";
-
-		expect(loadOrCreateProjectSystemPrompt(cwd, generated)).toBe(generated);
-		expect(await fs.promises.readFile(path.join(cwd, PROJECT_SYSTEM_PROMPT_FILENAME), "utf8")).toBe(generated);
-
-		await fs.promises.rm(cwd, { recursive: true, force: true });
-	});
-
-	test("uses an existing system_prompt.md without overwriting user edits", async () => {
-		const cwd = await fs.promises.mkdtemp(path.join(os.tmpdir(), "pi-system-prompt-test-"));
-		const promptPath = path.join(cwd, PROJECT_SYSTEM_PROMPT_FILENAME);
-		await fs.promises.writeFile(promptPath, "user-edited prompt", "utf8");
-
-		expect(loadOrCreateProjectSystemPrompt(cwd, "new generated prompt")).toBe("user-edited prompt");
-		expect(await fs.promises.readFile(promptPath, "utf8")).toBe("user-edited prompt");
-
-		await fs.promises.rm(cwd, { recursive: true, force: true });
-	});
-
-	test("explicit rebuild replaces system_prompt.md", async () => {
-		const cwd = await fs.promises.mkdtemp(path.join(os.tmpdir(), "pi-system-prompt-test-"));
-		const promptPath = path.join(cwd, PROJECT_SYSTEM_PROMPT_FILENAME);
-		await fs.promises.writeFile(promptPath, "user-edited prompt", "utf8");
-
-		expect(writeProjectSystemPrompt(cwd, "rebuilt prompt")).toBe(promptPath);
-		expect(await fs.promises.readFile(promptPath, "utf8")).toBe("rebuilt prompt");
-
-		await fs.promises.rm(cwd, { recursive: true, force: true });
-	});
-});
+import { buildSystemPrompt, injectRuntimeTools, injectToolGuidance } from "../src/core/system-prompt.ts";
 
 describe("buildSystemPrompt", () => {
 	describe("empty tools", () => {

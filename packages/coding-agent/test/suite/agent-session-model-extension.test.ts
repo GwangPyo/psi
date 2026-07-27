@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentTool, ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage, fauxToolCall, type Model, type Usage } from "@earendil-works/pi-ai";
@@ -16,7 +16,7 @@ describe("AgentSession model and extension characterization", () => {
 		}
 	});
 
-	it("materializes and uses the project system_prompt.md before the first provider call", async () => {
+	it("assembles the provider system prompt without materializing a workspace prompt file", async () => {
 		const harness = await createHarness();
 		harnesses.push(harness);
 		const promptPath = join(harness.tempDir, "system_prompt.md");
@@ -30,17 +30,9 @@ describe("AgentSession model and extension characterization", () => {
 
 		expect(existsSync(promptPath)).toBe(false);
 		await harness.session.prompt("hello");
-		const savedPrompt = readFileSync(promptPath, "utf8");
-		expect(savedPrompt).not.toContain("<available_tools>");
-		expect(providerSystemPrompt).toContain(savedPrompt);
+		expect(existsSync(promptPath)).toBe(false);
 		expect(providerSystemPrompt).toContain("<available_tools>");
 		expect(providerSystemPrompt).toBe(harness.session.systemPrompt);
-
-		writeFileSync(promptPath, "user-edited prompt", "utf8");
-		expect(harness.session.rebuildProjectSystemPrompt()).toBe(promptPath);
-		expect(harness.session.systemPrompt).toContain(readFileSync(promptPath, "utf8"));
-		expect(readFileSync(promptPath, "utf8")).not.toContain("<available_tools>");
-		expect(harness.session.systemPrompt).not.toBe("user-edited prompt");
 	});
 
 	it("setModel saves the model and emits model_select", async () => {

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
@@ -91,9 +91,7 @@ describe("AgentSession dynamic tool registration", () => {
 		expect(session.getActiveToolNames()).toContain("dynamic_tool");
 		expect(session.systemPrompt).toContain("- dynamic_tool: Run dynamic test behavior");
 		expect(session.systemPrompt).not.toContain("Use dynamic_tool when the user asks for dynamic behavior tests.");
-		const savedPrompt = readFileSync(join(tempDir, "system_prompt.md"), "utf8");
-		expect(savedPrompt).not.toContain("dynamic_tool");
-		expect(savedPrompt).not.toContain("<available_tools>");
+		expect(existsSync(join(tempDir, "system_prompt.md"))).toBe(false);
 
 		const toolCall = fauxToolCall("dynamic_tool", {});
 		await session.agent.beforeToolCall?.({

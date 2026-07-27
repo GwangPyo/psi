@@ -108,11 +108,8 @@ import { createSyntheticSourceInfo, type SourceInfo } from "./source-info.ts";
 import {
 	type BuildSystemPromptOptions,
 	buildSystemPrompt,
-	getProjectSystemPromptPath,
 	injectRuntimeTools,
 	injectToolGuidance,
-	loadOrCreateProjectSystemPrompt,
-	writeProjectSystemPrompt,
 } from "./system-prompt.ts";
 import { type BashOperations, createLocalBashOperations } from "./tools/bash.ts";
 import { createAllToolDefinitions } from "./tools/index.ts";
@@ -379,10 +376,8 @@ export class AgentSession {
 
 	// Base system prompt (without extension appends) - used to apply fresh appends each turn
 	private _baseSystemPrompt = "";
-	private _generatedProjectSystemPrompt = "";
 	private _baseSystemPromptOptions!: BuildSystemPromptOptions;
 	private _systemPromptOverride?: string;
-	private _projectSystemPromptActive = false;
 
 	constructor(config: AgentSessionConfig) {
 		this.agent = config.agent;
@@ -1213,7 +1208,7 @@ Inspect only that tool's definition, schema, and guidance. Call it exactly once.
 			}));
 	}
 
-	private _rebuildSystemPrompt(toolNames: string[], useProjectFile = true): string {
+	private _rebuildSystemPrompt(toolNames: string[]): string {
 		const validToolNames = toolNames.filter((name) => this._toolRegistry.has(name));
 		const loaderSystemPrompt = this._resourceLoader.getSystemPrompt();
 		const loaderAppendSystemPrompt = this._resourceLoader.getAppendSystemPrompt();
@@ -1230,38 +1225,11 @@ Inspect only that tool's definition, schema, and guidance. Call it exactly once.
 			appendSystemPrompt,
 			selectedTools: validToolNames,
 		};
-		this._generatedProjectSystemPrompt = buildSystemPrompt(this._baseSystemPromptOptions);
-		const projectPrompt =
-			useProjectFile && this._projectSystemPromptActive
-				? loadOrCreateProjectSystemPrompt(this._cwd, this._generatedProjectSystemPrompt)
-				: this._generatedProjectSystemPrompt;
 		return injectRuntimeTools(
-			projectPrompt,
+			buildSystemPrompt(this._baseSystemPromptOptions),
 			this._runtimeToolPrompts(validToolNames),
 			Array.from(this._toolPromptGuidelines.values()).flat(),
 		);
-	}
-
-	private _activateProjectSystemPrompt(): void {
-		const projectPrompt = loadOrCreateProjectSystemPrompt(this._cwd, this._generatedProjectSystemPrompt);
-		this._baseSystemPrompt = injectRuntimeTools(
-			projectPrompt,
-			this._runtimeToolPrompts(this.getActiveToolNames()),
-			Array.from(this._toolPromptGuidelines.values()).flat(),
-		);
-		this._projectSystemPromptActive = true;
-		this.agent.state.systemPrompt = this._systemPromptOverride ?? this._baseSystemPrompt;
-	}
-
-	/** Regenerate system_prompt.md from the current tools, skills, context, and prompt inputs, then apply it. */
-	rebuildProjectSystemPrompt(): string {
-		this._rebuildSystemPrompt(this.getActiveToolNames(), false);
-		const promptPath = writeProjectSystemPrompt(this._cwd, this._generatedProjectSystemPrompt);
-		this._projectSystemPromptActive = true;
-		this._baseSystemPrompt = this._rebuildSystemPrompt(this.getActiveToolNames());
-		this._systemPromptOverride = undefined;
-		this.agent.state.systemPrompt = this._baseSystemPrompt;
-		return promptPath;
 	}
 
 	// =========================================================================
@@ -1300,7 +1268,6 @@ Inspect only that tool's definition, schema, and guidance. Call it exactly once.
 	}
 
 	private async _runAgentPrompt(messages: AgentMessage | AgentMessage[]): Promise<void> {
-		if (!this._projectSystemPromptActive) this._activateProjectSystemPrompt();
 		if (this._systemPromptOverride !== undefined) {
 			this._systemPromptOverride = injectRuntimeTools(
 				this._systemPromptOverride,
@@ -2481,7 +2448,6 @@ Inspect only that tool's definition, schema, and guidance. Call it exactly once.
 		this._applyExtensionBindings(this._extensionRunner);
 		await this._extensionRunner.emit(this._sessionStartEvent);
 		await this.extendResourcesFromExtensions(this._sessionStartEvent.reason === "reload" ? "reload" : "startup");
-		this._activateProjectSystemPrompt();
 	}
 
 	private async extendResourcesFromExtensions(reason: "startup" | "reload"): Promise<void> {
@@ -2787,7 +2753,6 @@ Inspect only that tool's definition, schema, and guidance. Call it exactly once.
 		flagValues?: Map<string, boolean | string>;
 		includeAllExtensionTools?: boolean;
 	}): void {
-		this._projectSystemPromptActive = false;
 		const autoResizeImages = this.settingsManager.getImageAutoResize();
 		const shellCommandPrefix = this.settingsManager.getShellCommandPrefix();
 		const shellPath = this.settingsManager.getShellPath();
@@ -2835,7 +2800,6 @@ Inspect only that tool's definition, schema, and guidance. Call it exactly once.
 			activeToolNames: baseActiveToolNames,
 			includeAllExtensionTools: options.includeAllExtensionTools,
 		});
-		if (existsSync(getProjectSystemPromptPath(this._cwd))) this._activateProjectSystemPrompt();
 	}
 
 	async reload(options?: { beforeSessionStart?: () => void | Promise<void> }): Promise<void> {
@@ -2861,7 +2825,6 @@ Inspect only that tool's definition, schema, and guidance. Call it exactly once.
 			await this._extensionRunner.emit({ type: "session_start", reason: "reload" });
 			await this.extendResourcesFromExtensions("reload");
 		}
-		this._activateProjectSystemPrompt();
 	}
 
 	// =========================================================================

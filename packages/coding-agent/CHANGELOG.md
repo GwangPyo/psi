@@ -4,8 +4,11 @@
 
 ### Added
 
+- Added a built-in Bash safety hook that rewrites recursive forced `rm` invocations without `--force` and reports the replacement in the tool result returned to the agent.
+- Added a built-in MCP-backed `test` tool that runs against the project in place with a read-only worktree, a disposable `/tmp` scratch directory as the only writable path, and enforcement against direct test-runner use through Bash.
 - Added incremental nonlinear plan-guide authoring with retained sequence, parallel, choice, revision, and final topology operations.
-- Added an editable project-root `system_prompt.md` for persistent prompt content, with request-time active tool catalogs, guided tools executed by isolated single-tool subagents, and explicit regeneration through `/init` and `/rebuild_sysprompt`.
+- Added separate packaged planning and execution PlanFSM system prompts, with enforced top-down what/how/why/when revisions, a final sibling-task dependency audit that requires independent work to use fork/join topology, a mandatory interactive grill gate when selected, dependency-aware execution frontier scheduling, and terminal-native FSM graph rendering.
+- Added request-time active tool catalogs and guided tools executed by isolated single-tool subagents.
 - Added minimal-change implementation discipline to generated default system prompts and an optional implementation Grill before `/plan` drafting.
 - Added core extension package management through `/manage_extension` and a bundled model-facing MCP tool, including npm `pi-package` search and automatic resource reload after mutations.
 - Added highest-priority `subagentDefaultModel` settings support and a `/subagent-model` selector command to the bundled subagent extension, including trusted project-setting support.

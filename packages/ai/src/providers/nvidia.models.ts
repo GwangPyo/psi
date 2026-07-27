@@ -29,14 +29,6 @@ export const NVIDIA_MODELS = values as {
 		id: "minimaxai/minimax-m3";
 		provider: "nvidia";
 	};
-	"mistralai/mistral-large-3-675b-instruct-2512": Model<"openai-completions"> & {
-		id: "mistralai/mistral-large-3-675b-instruct-2512";
-		provider: "nvidia";
-	};
-	"mistralai/mistral-small-4-119b-2603": Model<"openai-completions"> & {
-		id: "mistralai/mistral-small-4-119b-2603";
-		provider: "nvidia";
-	};
 	"moonshotai/kimi-k2.6": Model<"openai-completions"> & {
 		id: "moonshotai/kimi-k2.6";
 		provider: "nvidia";
@@ -67,10 +59,6 @@ export const NVIDIA_MODELS = values as {
 	};
 	"openai/gpt-oss-20b": Model<"openai-completions"> & {
 		id: "openai/gpt-oss-20b";
-		provider: "nvidia";
-	};
-	"stepfun-ai/step-3.5-flash": Model<"openai-completions"> & {
-		id: "stepfun-ai/step-3.5-flash";
 		provider: "nvidia";
 	};
 	"stepfun-ai/step-3.7-flash": Model<"openai-completions"> & {

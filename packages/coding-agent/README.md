@@ -330,11 +330,7 @@ Disable context file loading with `--no-context-files` (or `-nc`).
 
 ### System Prompt
 
-At startup, Pi loads the persistent part of its system prompt from `system_prompt.md` in the current working directory. If the file does not exist, Pi generates it from the static prompt inputs, including skills and project context. The active tool catalog is computed from the tools actually enabled for each provider request and is not written to the file. When a selected tool has tool-specific guidance, an isolated single-tool subagent receives that guidance, executes the tool, and returns the ordinary tool result to the main agent. Edit `system_prompt.md` directly and run `/reload` to apply static prompt changes.
-
-Run `/init` or `/rebuild_sysprompt` to explicitly discard the current file contents, rebuild it from the latest prompt-generation inputs, and apply it immediately.
-
-Legacy `.pi/SYSTEM.md`, `~/.pi/agent/SYSTEM.md`, and `APPEND_SYSTEM.md` inputs are incorporated when the file is first generated. Once `system_prompt.md` exists, its contents are authoritative for the persistent prompt; request-time tool metadata remains dynamic.
+Replace the default system prompt with `.pi/SYSTEM.md` (project) or `~/.pi/agent/SYSTEM.md` (global). Append without replacing via `APPEND_SYSTEM.md`. The active tool catalog is computed from the tools enabled for each provider request. When a selected tool has tool-specific guidance, an isolated single-tool subagent receives that guidance, executes the tool, and returns the ordinary tool result to the main agent.
 
 ---
 
