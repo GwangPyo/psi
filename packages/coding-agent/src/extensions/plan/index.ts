@@ -5,7 +5,7 @@
  * persisted machine through explicit, structured transition tool calls.
  */
 
-import { Key } from "@earendil-works/pi-tui";
+import { Key, Text, HBox, type Component } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import type { ExtensionAPI, ExtensionContext } from "../../core/extensions/types.ts";
 import { type AnimatedStatus, startAnimatedStatus } from "../animated-status.ts";
@@ -15,7 +15,6 @@ import {
 	formatPlanMachine,
 	formatPlanRuntime,
 	formatPlanWidget,
-	popupPlanGraph,
 	PlanFSM,
 	type PlanMachineDefinition,
 	type PlanRuntimeSnapshot,
@@ -24,20 +23,38 @@ import {
 import {
 	applyPlanGuideCommand,
 	createPlanGuideDraft,
-	formatPlanGuideStatus,
+	formatPlanGuideGrounding,
 	PlanGuideCommandSchema,
 	type PlanGuideDraft,
+	preparePlanGuideArguments,
 } from "./guide.ts";
+import { buildExecutionSystemPrompt, buildPlanSystemPrompt } from "./prompt.ts";
+import { PlanGraphComponent } from "./tui-graph.ts";
 import { isSafeCommand } from "./utils.ts";
 
 const GUIDE_PLAN_TOOL = "guide_plan";
+const PLAN_GRILL_TOOL = "plan_grill";
 const TRANSITION_PLAN_TOOL = "plan_transition";
 const PLAN_DRAFTING_WIDGET = "plan-drafting";
-const PLAN_MODE_TOOLS = ["read", "bash", "grep", "find", "ls", "questionnaire", GUIDE_PLAN_TOOL];
+const PLAN_MODE_TOOLS = ["read", "bash", "grep", "find", "ls", PLAN_GRILL_TOOL, GUIDE_PLAN_TOOL];
 const NORMAL_MODE_TOOLS = ["read", "bash", "edit", "write"];
 const PLAN_MODE_DISABLED_TOOLS = new Set<string>(["edit", "write", TRANSITION_PLAN_TOOL]);
-const PLAN_CONTROL_TOOLS = new Set<string>([GUIDE_PLAN_TOOL, TRANSITION_PLAN_TOOL]);
+const PLAN_CONTROL_TOOLS = new Set<string>([PLAN_GRILL_TOOL, GUIDE_PLAN_TOOL, TRANSITION_PLAN_TOOL]);
 const PLAN_MANAGED_TOOLS = new Set<string>([...PLAN_MODE_TOOLS, ...NORMAL_MODE_TOOLS, ...PLAN_CONTROL_TOOLS]);
+
+const PlanGrillParameters = Type.Object({
+	question: Type.String({
+		minLength: 1,
+		description: "One material question whose answer cannot be discovered from the repository",
+	}),
+	choices: Type.Optional(
+		Type.Array(Type.String({ minLength: 1 }), {
+			minItems: 2,
+			uniqueItems: true,
+			description: "Optional concrete choices; omit when the user needs free-form input",
+		}),
+	),
+});
 
 const PlanTransitionParameters = Type.Object({
 	event: Type.String({ minLength: 1, description: "Exact event name on the transition to dispatch" }),
@@ -59,6 +76,7 @@ interface PlanModeState {
 	enabled: boolean;
 	executing: boolean;
 	grillBeforePlanning?: boolean;
+	grillCompleted?: boolean;
 	machine?: PlanMachineDefinition;
 	snapshot?: PlanRuntimeSnapshot;
 	draft?: PlanGuideDraft;
@@ -86,6 +104,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 	let planModeEnabled = false;
 	let executionMode = false;
 	let grillBeforePlanning = false;
+	let grillCompleted = false;
 	let machineDefinition: PlanMachineDefinition | undefined;
 	let runtimeSnapshot: PlanRuntimeSnapshot | undefined;
 	let planGuideDraft = createPlanGuideDraft();
@@ -103,6 +122,72 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		draftingStatus = undefined;
 	}
 
+	function formatPlanProgressText(): string {
+		const lines: string[] = [];
+		if (!machineDefinition) {
+			if (planGuideDraft.reviews.length > 0) {
+				for (const review of planGuideDraft.reviews) {
+					lines.push(`▶ [${review.dimension} review] ${review.revisionSummary}`);
+				}
+			}
+			if (planGuideDraft.pendingReview) {
+				lines.push(`▶ [${planGuideDraft.pendingReview.dimension} review] ${planGuideDraft.pendingReview.assessment}`);
+			}
+		} else if (runtimeSnapshot) {
+			for (const record of runtimeSnapshot.history) {
+				const prefix = record.sourceStateId ? `▶ [${record.sourceStateId}]` : "▶";
+				lines.push(`${prefix} ${record.event}${record.evidence ? ` - ${record.evidence}` : ""}`);
+			}
+			if (runtimeSnapshot.blockReason) {
+				lines.push(`▶ Blocked: ${runtimeSnapshot.blockReason}`);
+			}
+		}
+		
+		if (lines.length === 0) {
+			lines.push("▶ Waiting for agent progress...");
+		}
+		
+		if (lines.length > 10) {
+			return "... (earlier progress truncated)\n" + lines.slice(-9).join("\n");
+		}
+		return lines.join("\n");
+	}
+
+	class PlanLayoutWidget implements Component {
+		private hbox: HBox;
+		private leftText: Text;
+		private rightText: Text;
+
+		constructor() {
+			this.leftText = new Text("", 1, 0);
+			this.rightText = new Text("", 1, 0);
+			this.hbox = new HBox(this.leftText, this.rightText, 0.4, 4);
+		}
+
+		update(left: string, right: string) {
+			this.leftText.setText(left);
+			this.rightText.setText(right);
+			this.hbox.invalidate();
+		}
+
+		render(width: number): string[] {
+			return this.hbox.render(width);
+		}
+
+		invalidate(): void {
+			this.hbox.invalidate();
+		}
+	}
+
+	let planLayoutWidget: PlanLayoutWidget | undefined;
+
+	function getPlanLayoutWidget(): PlanLayoutWidget {
+		if (!planLayoutWidget) {
+			planLayoutWidget = new PlanLayoutWidget();
+		}
+		return planLayoutWidget;
+	}
+
 	function updateStatus(ctx: ExtensionContext): void {
 		if (executionMode && machineDefinition && runtimeSnapshot) {
 			stopDraftingStatus();
@@ -111,7 +196,13 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 			).length;
 			const total = machineDefinition.states.filter((state) => state.kind !== "final").length;
 			ctx.ui.setStatus("plan-mode", ctx.ui.theme.fg("accent", `plan ${completed}/${total}`));
-			ctx.ui.setWidget("plan-todos", formatPlanWidget(machineDefinition, runtimeSnapshot));
+			ctx.ui.setWidget("plan-layout", (_tui, _thm) => {
+				const widget = getPlanLayoutWidget();
+				widget.update(formatPlanWidget(machineDefinition!, runtimeSnapshot!).join("\n"), formatPlanProgressText());
+				return widget;
+			}, { placement: "aboveEditor" });
+			ctx.ui.setWidget(PLAN_DRAFTING_WIDGET, undefined);
+			ctx.ui.setWidget("plan-todos", undefined);
 			return;
 		}
 
@@ -124,33 +215,45 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 				} else {
 					draftingStatus = startAnimatedStatus({
 						label,
-						setStatus: (text) =>
-							ctx.ui.setWidget(PLAN_DRAFTING_WIDGET, text ? [text] : undefined, { placement: "aboveEditor" }),
+						setStatus: (text) => {
+							ctx.ui.setWidget("plan-layout", (_tui, _thm) => {
+								const widget = getPlanLayoutWidget();
+								widget.update(text || "", formatPlanProgressText());
+								return widget;
+							}, { placement: "aboveEditor" });
+						},
 						render: (frame, text) => `${ctx.ui.theme.fg("accent", frame)} ${ctx.ui.theme.fg("warning", text)}`,
 					});
 				}
 				ctx.ui.setWidget("plan-todos", undefined);
+				ctx.ui.setWidget(PLAN_DRAFTING_WIDGET, undefined);
 				return;
 			}
 
 			stopDraftingStatus();
 			ctx.ui.setStatus("plan-mode", ctx.ui.theme.fg("warning", machineDefinition ? "plan ready" : "plan drafting"));
-			ctx.ui.setWidget(
-				"plan-todos",
-				machineDefinition && runtimeSnapshot ? formatPlanWidget(machineDefinition, runtimeSnapshot) : undefined,
-			);
+			ctx.ui.setWidget("plan-layout", (_tui, _thm) => {
+				const leftText = machineDefinition && runtimeSnapshot ? formatPlanWidget(machineDefinition, runtimeSnapshot).join("\n") : "";
+				const widget = getPlanLayoutWidget();
+				widget.update(leftText, formatPlanProgressText());
+				return widget;
+			}, { placement: "aboveEditor" });
+			ctx.ui.setWidget("plan-todos", undefined);
+			ctx.ui.setWidget(PLAN_DRAFTING_WIDGET, undefined);
 			return;
 		}
 
 		stopDraftingStatus();
 		ctx.ui.setStatus("plan-mode", undefined);
+		ctx.ui.setWidget("plan-layout", undefined);
 		ctx.ui.setWidget("plan-todos", undefined);
+		ctx.ui.setWidget(PLAN_DRAFTING_WIDGET, undefined);
 	}
 
 	function getPlanModeTools(activeToolNames: string[]): string[] {
 		return uniqueToolNames([
 			...withoutPlanControlTools(activeToolNames).filter((name) => !PLAN_MODE_DISABLED_TOOLS.has(name)),
-			...PLAN_MODE_TOOLS,
+			...PLAN_MODE_TOOLS.filter((name) => name !== PLAN_GRILL_TOOL || (grillBeforePlanning && !grillCompleted)),
 		]);
 	}
 
@@ -186,6 +289,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 			enabled: planModeEnabled,
 			executing: executionMode,
 			grillBeforePlanning,
+			grillCompleted,
 			machine: machineDefinition,
 			snapshot: runtimeSnapshot,
 			draft: planGuideDraft,
@@ -204,6 +308,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		executionContinuationPending = false;
 		executionRunTransitionCount = undefined;
 		noProgressRuns = 0;
+		grillCompleted = !grillBeforePlanning;
 	}
 
 	async function togglePlanMode(ctx: ExtensionContext): Promise<void> {
@@ -268,18 +373,12 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 	function executionContext(): string {
 		if (!machineDefinition || !runtimeSnapshot) return "No executable PlanFSM is loaded.";
 		const fsm = new PlanFSM(machineDefinition, runtimeSnapshot);
-		return `[EXECUTING PLAN FSM - Full tool access enabled]
-${formatPlanRuntime(machineDefinition, runtimeSnapshot)}
-
-Active state contracts:
-${formatActiveStateInstructions(machineDefinition, runtimeSnapshot)}
-
-Enabled transitions:
-${formatEnabledTransitions(getEnabledTransitions(fsm))}
-
-Treat every active action as a required postcondition. Inspect the current workspace, establish any missing outcome, verify every acceptance criterion, and call ${TRANSITION_PLAN_TOOL}.
-Parallel active states are one ready frontier: advance any state without waiting for unrelated states. Structural AUTO transitions are settled by the runtime.
-An execution run may end only after dispatching a transition, reaching a terminal state, or reporting a concrete externally blocked condition. Never wait for another system instruction while the PlanFSM is running.`;
+		return buildExecutionSystemPrompt({
+			transitionToolName: TRANSITION_PLAN_TOOL,
+			runtime: formatPlanRuntime(machineDefinition, runtimeSnapshot),
+			activeStateInstructions: formatActiveStateInstructions(machineDefinition, runtimeSnapshot),
+			enabledTransitions: formatEnabledTransitions(getEnabledTransitions(fsm)),
+		});
 	}
 
 	pi.registerFlag("plan", {
@@ -289,23 +388,74 @@ An execution run may end only after dispatching a transition, reaching a termina
 	});
 
 	pi.registerTool({
+		name: PLAN_GRILL_TOOL,
+		label: "Plan Grill",
+		description:
+			"Ask exactly one material planning question. When grill-before-planning is enabled, guide_plan remains blocked until the user answers this tool.",
+		promptSnippet: "Resolve one undiscoverable material planning decision before drafting",
+		promptGuidelines: [
+			"Inspect the repository first and ask only a question whose answer materially changes the plan.",
+			"Ask exactly one question per call.",
+		],
+		parameters: PlanGrillParameters,
+		executionMode: "sequential",
+		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+			if (!planModeEnabled || !grillBeforePlanning) {
+				throw new Error("plan_grill is only available when grill-before-planning is active.");
+			}
+			if (!ctx.hasUI) throw new Error("plan_grill requires interactive UI.");
+
+			const answer = params.choices
+				? await ctx.ui.select(params.question, params.choices)
+				: await ctx.ui.editor(params.question, "");
+			if (!answer?.trim()) {
+				return {
+					content: [{ type: "text", text: "The grill question was cancelled or left unanswered." }],
+					details: { completed: false },
+				};
+			}
+
+			grillCompleted = true;
+			enablePlanModeTools();
+			persistState();
+			ctx.ui.notify("Planning grill completed. Plan topology is now unlocked.", "info");
+			return {
+				content: [{ type: "text", text: `User answer: ${answer.trim()}` }],
+				details: { completed: true, answer: answer.trim() },
+			};
+		},
+	});
+
+	pi.registerTool({
 		name: GUIDE_PLAN_TOOL,
 		label: "Guide Plan Topology",
 		description:
-			"Incrementally construct a nonlinear plan by adding sequence, parallel, choice, revision, and final topology. The server retains the graph and compiles it to a validated PlanFSM only on finalize.",
+			"Incrementally construct a nonlinear plan with one operation per call. The server retains the graph, so send only fields required by the selected operation. Refine an existing action with update_state and compile only with finalize.",
 		promptSnippet: "Expand the retained plan frontier with explicit topology operations",
 		promptGuidelines: [
-			"Start once, then grow the open frontier with add_sequence, add_parallel, add_choice, connect, update_state, and add_final operations.",
-			"Use add_sequence to define macro subgoals and their concrete dependencies (producer-consumer, verification, etc).",
-			"Use add_parallel whenever sibling subgoals do not consume one another's artifacts or decisions.",
-			"Use connect to create backward loops (e.g., from a verification state back to an implementation state) to handle failures and revisions robustly.",
-			"Do not serialize the complete PlanFSM. Finalize only after every open frontier has a final, convergence, or revision path.",
+			"Plan top-down from goal and system outcomes to component, implementation, and verification actions; use parentId for conceptual ownership and transitions for execution order.",
+			"Start once, build dependency-correct topology, then review and revise it in strict what, how, why, when order followed by a final FSM dependency audit.",
+			"Use add_parallel for independent siblings, add_sequence only for concrete dependencies, add_choice for guarded routes, and connect for convergence or bounded loops.",
+			"Each review requires a subsequent state or topology change and exactly one matching revise operation.",
+			"Finalize only after every frontier is closed, all question revisions are complete, and independent sibling tasks have validated fork/join topology.",
 		],
 		parameters: PlanGuideCommandSchema,
+		prepareArguments: (input) => preparePlanGuideArguments(input, planGuideDraft.pendingReview?.dimension),
 		executionMode: "sequential",
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
 			if (!planModeEnabled) throw new Error("guide_plan is only available while plan mode is active.");
-			const result = applyPlanGuideCommand(planGuideDraft, params);
+			if (grillBeforePlanning && !grillCompleted) {
+				throw new Error(
+					`Planning grill is required. Inspect the repository, call ${PLAN_GRILL_TOOL}, and wait for the user's answer before using ${GUIDE_PLAN_TOOL}.`,
+				);
+			}
+			let result: ReturnType<typeof applyPlanGuideCommand>;
+			try {
+				result = applyPlanGuideCommand(planGuideDraft, params);
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				throw new Error(`${message}\n\n${formatPlanGuideGrounding(planGuideDraft)}`, { cause: error });
+			}
 			planGuideDraft = result.draft;
 			if (params.operation === "finalize" && result.errors.length > 0) {
 				persistState();
@@ -313,7 +463,7 @@ An execution run may end only after dispatching a transition, reaching a termina
 					content: [
 						{
 							type: "text",
-							text: `Plan guide is not executable:\n${result.errors.map((error) => `- ${error}`).join("\n")}\n\n${formatPlanGuideStatus(planGuideDraft)}`,
+							text: `Plan guide is not executable:\n${result.errors.map((error) => `- ${error}`).join("\n")}\n\n${formatPlanGuideGrounding(planGuideDraft)}`,
 						},
 					],
 					details: { accepted: false, errors: result.errors, status: result.status },
@@ -329,15 +479,32 @@ An execution run may end only after dispatching a transition, reaching a termina
 			persistState();
 			if (!result.machine) {
 				return {
-					content: [{ type: "text", text: formatPlanGuideStatus(planGuideDraft) }],
-					details: { accepted: false, status: result.status },
+					content: [{ type: "text", text: formatPlanGuideGrounding(planGuideDraft) }],
+					details: { accepted: true, status: result.status },
 				};
 			}
-			popupPlanGraph(machineDefinition!).catch(() => {});
 			return {
 				content: [{ type: "text", text: `PlanFSM accepted.\n\n${formatPlanMachine(machineDefinition!)}` }],
 				details: { machine: machineDefinition, snapshot: runtimeSnapshot },
 			};
+		},
+		renderResult(result, { expanded }, theme) {
+			const details = result.details as
+				| {
+						machine?: PlanMachineDefinition;
+						snapshot?: PlanRuntimeSnapshot;
+						errors?: string[];
+				  }
+				| undefined;
+			if (details?.machine) {
+				return new PlanGraphComponent(details.machine, theme, {
+					expanded,
+					snapshot: details.snapshot,
+				});
+			}
+			const content = result.content[0];
+			const text = content?.type === "text" ? content.text : "";
+			return new Text(details?.errors ? theme.fg("error", text) : theme.fg("muted", text), 0, 0);
 		},
 	});
 
@@ -401,7 +568,6 @@ An execution run may end only after dispatching a transition, reaching a termina
 				ctx.ui.notify("No PlanFSM. Create one with /plan.", "info");
 				return;
 			}
-			popupPlanGraph(machineDefinition!).catch(() => {});
 			ctx.ui.notify(
 				`${formatPlanRuntime(machineDefinition, runtimeSnapshot)}\n\n${formatPlanMachine(machineDefinition)}`,
 				"info",
@@ -436,109 +602,22 @@ An execution run may end only after dispatching a transition, reaching a termina
 		};
 	});
 
-	pi.on("before_agent_start", async () => {
+	pi.on("before_agent_start", async (event) => {
 		if (planModeEnabled) {
 			return {
-				message: {
-					customType: "plan-mode-context",
-					content: `[PLAN MODE ACTIVE]
-Build an executable nonlinear guide with ${GUIDE_PLAN_TOOL}. The guide is retained server-side; never serialize a complete PlanFSM.
-
-Current guide:
-${formatPlanGuideStatus(planGuideDraft)}
-
-Planning procedure:
-${
-	grillBeforePlanning
-		? `0. Inspect and grill the user before committing topology.
-   - First, resolve repository facts with read-only tools.
-   - Second, you MUST use the questionnaire tool to grill the user and clarify any unresolved requirements or design decisions BEFORE proceeding with the plan topology.
-   - CRITICAL: When using the questionnaire tool, you MUST ask exactly ONE question at a time (pass only one item in the questions array). Wait for the user's response before asking the next question.
-   - Represent unresolved material decisions with add_choice.
-   - Continue expanding every independent frontier that does not depend on the unresolved choice.
-
-`
-		: ""
-}1. Establish the goal and boundaries.
-   - Restate the complete user outcome in goal without shrinking its scope.
-   - Identify repository rules, user constraints, named deliverables, tests, and runtime behavior required to prove completion.
-   - Resolve important unknowns through read-only inspection. Ask the user only when a choice materially changes the result and cannot be discovered.
-
-2. Draft the topology with ${GUIDE_PLAN_TOOL}.system before proposing implementation.
-   - Locate relevant entry points, data flow, public contracts, tests, configuration, and error handling.
-   - Search for existing functions, libraries, helpers, and abstractions that already provide each needed capability.
-   - Put reuse and contract checks in state instructions and acceptanceCriteria. Do not create duplicate implementation states when an existing capability can be reused or extended.
-   - Record assumptions as context.variables when a later guard or choice depends on them.
-
-3. Decompose top-down.
-   - Use abstraction levels goal, system, component, implementation, and verification.
-   - parentId expresses conceptual ownership or decomposition. It does not create an execution dependency; transitions do that.
-   - Each executable action state must have one bounded responsibility, an explicit role, a concrete instruction, measurable acceptanceCriteria, and an errorPolicy.
-   - Keep states large enough to represent meaningful outcomes.
-
-4. Build the dependency graph before choosing an order.
-   - For every pair of action states, ask whether one consumes an artifact, decision, contract, or verified result produced by the other.
-   - Add a serial transition only for a real data, control, resource-conflict, or user-decision dependency.
-   - States sharing a predecessor with no dependency on one another are parallel candidates. Activate them together from a fork state with one multi-target transition.
-   - Synchronize parallel branches with a multi-source transition into a join state before shared verification or integration.
-   - File proximity or planning convenience alone does not justify serialization.
-   - Set parallelism.strategy to parallel when any independent group exists. List each branch-entry group in independentStateGroups and explain remaining dependencies in rationale.
-   - Set strategy to sequential only when every action is dependency-constrained; rationale must name those concrete predecessor relationships.
-
-5. Choose state kinds by runtime meaning.
-   - action: work that produces independently verifiable outcomes.
-   - choice: a decision point with at least two guarded outgoing transitions. Guards should be mutually understandable and priorities deterministic.
-   - fork: structural state whose outgoing transition activates multiple branch-entry states at once.
-   - join: structural convergence reached by a transition whose from array contains every required branch-completion state.
-   - checkpoint: structural marker that records one independently completed parallel branch.
-   - final: terminal success, failure, or blocked outcome. Final states have no outgoing transitions.
-
-6. Define transitions as executable hyperedges.
-   - from and to are arrays. A transition is enabled only when every from state is active and its guard passes.
-   - Use stable IDs and exact, meaningful event names. Include success, failure, retry, fallback, and decision events needed by execution.
-   - Use effects only for scalar context updates needed by later guards.
-   - Every non-final state needs a viable outgoing path, every state must be reachable, and at least one final state must be reachable.
-
-7. Model failure explicitly.
-   - propagate exposes the original failure; translate exposes a domain-level failure; retry uses retryLimit; fallback names fallbackStateId; suppress requires explicit approval.
-   - Set mayHideFailure truthfully. suppressionAllowed is true only with actual authorization. When hiding is possible, provide justification and observableSignals.
-   - Default to visible failure. Never use try/catch or fallback merely to make execution appear successful.
-
-8. Bound every cycle.
-   - Revision and retry loops require maxVisits and/or visit_count_lt or transition_count_lt guards.
-   - Provide an exit path to success, failure, or blocked. Set global maxTransitions high enough for valid retries and low enough to stop runaway execution.
-
-9. Design verification as part of the graph.
-   - acceptanceCriteria must name observable outcomes such as exact tests, type checks, runtime probes, changed contracts, or inspected artifacts.
-   - Put shared integration verification after joins. Keep branch-local verification inside its branch when it does not depend on other branches.
-   - A success transition is valid only after its source acceptanceCriteria can be supported.
-
-10. Audit the complete machine before submission.
-   - Check IDs and references, reachability, final outcomes, parent hierarchy, guard variables, error policies, loop bounds, fork targets, join sources, and transition limits.
-   - Look for accidental linear chains. Convert independent siblings into fork/join branches.
-   - Confirm the machine still covers the user's full goal and every named deliverable.
-
-Guide protocol:
-- Call start once, then expand the open frontier with topology operations.
-- Use add_parallel for independent sibling outcomes and add_sequence only for concrete dependencies.
-- Use add_choice for dynamic or user-dependent routes instead of silently selecting a branch.
-- Treat action nodes as required postconditions. Existing code may satisfy one after verification; do not encode needless rewrites.
-- Add verification, convergence, revision, and final paths before finalize.
-- Repair only the affected topology operation when finalize reports an error. Never resend the graph.
-
-Keep built-in write tools disabled throughout planning.`,
-					display: false,
-				},
+				systemPrompt: `${event.systemPrompt}\n\n${buildPlanSystemPrompt({
+					guideToolName: GUIDE_PLAN_TOOL,
+					grillToolName: PLAN_GRILL_TOOL,
+					guideStatus: formatPlanGuideGrounding(planGuideDraft),
+					grillBeforePlanning,
+					grillCompleted,
+				})}`,
 			};
 		}
 
 		if (executionMode && machineDefinition && runtimeSnapshot) {
 			return {
-				message: {
-					customType: "plan-execution-context",
-					content: executionContext(),
-					display: false,
-				},
+				systemPrompt: `${event.systemPrompt}\n\n${executionContext()}`,
 			};
 		}
 	});
@@ -644,6 +723,7 @@ Keep built-in write tools disabled throughout planning.`,
 			planModeEnabled = entry.data.enabled ?? planModeEnabled;
 			executionMode = entry.data.executing ?? false;
 			grillBeforePlanning = entry.data.grillBeforePlanning ?? false;
+			grillCompleted = entry.data.grillCompleted ?? !grillBeforePlanning;
 			toolsBeforePlanMode = entry.data.toolsBeforePlanMode;
 			planGuideDraft = entry.data.draft ?? createPlanGuideDraft();
 			if (entry.data.machine && entry.data.snapshot) {
