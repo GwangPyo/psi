@@ -3,7 +3,7 @@ set -e
 
 # Get the absolute path of this script
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PI_DIR="$SCRIPT_DIR/pi"
+PI_DIR="$SCRIPT_DIR"
 
 echo "=> Starting source build..."
 cd "$PI_DIR"

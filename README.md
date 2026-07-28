@@ -1,3 +1,75 @@
+# PSI — A Structured, Multi-Agent Fork of Pi
+
+PSI extends the Pi coding agent with finite-state planning, specification-first implementation, role-based model orchestration, automatic intention analysis, and user-prompt-prioritized context compaction.
+
+## Quick Start
+
+```bash
+git clone https://github.com/GwangPyo/psi.git
+cd psi
+./install_psi.sh
+psi
+```
+
+`install_psi.sh` installs dependencies, builds PSI, and creates the `psi` command in `~/.local/bin`. Ensure that `~/.local/bin` is included in your `PATH`.
+
+### Authenticate Providers
+
+Run `/login` inside PSI and select a provider. Multiple providers can be configured, including:
+
+- OpenAI Codex
+- Anthropic Claude Code
+- Google Gemini CLI
+
+### Configure Agent Models
+
+PSI separates model roles so expensive reasoning is used only where it matters. Run each command without arguments to open its interactive model selector:
+
+1. **Main agent — `/model`**: choose your strongest model for planning, difficult implementation, integration, and final decisions.
+2. **Subagent — `/subagent-model`**: choose a capable mid-tier model for delegated, well-specified implementation tasks.
+3. **Background agent — `/background-agent-model`**: choose your weakest and least expensive model. GPT-5.4 mini or Claude Haiku-class models are recommended because background work is frequent and intentionally lightweight.
+
+Use `/login` first if the desired provider does not appear in a model selector.
+
+## Major Features
+
+### Finite-State-Machine Planning
+
+PSI planning runs on a validated **PlanFSM**, not a prose checklist. Plans encode explicit states, transitions, guards, dependencies, bounded retries, recovery paths, and parallel execution frontiers. Execution advances through enabled transitions and cannot silently skip required states or complete before the machine reaches a valid terminal state.
+
+### Structured Writing
+
+Plan mode automatically enables Structured Writing for the implementation phase. Implementation follows a specification-first workflow:
+
+1. Define a focused subgoal.
+2. Write signatures, types, and documentation before implementation.
+3. Classify each function as **Hard** or **Easy**.
+4. The **main agent implements Hard functions**.
+5. A **subagent implements Easy functions**; the main agent reviews the result rather than writing the first attempt.
+6. **One-strike fallback:** if the subagent attempt fails or the main agent rejects it, delegation ends immediately and the main agent implements the function itself.
+
+This keeps architectural responsibility with the main agent while using less expensive models for bounded implementation work.
+
+### Automatic Emotion and Intention Analysis
+
+PSI monitors the conversation for strong frustration or other clear signs that the agent has misunderstood the user. When degradation is detected, a subagent automatically performs intention analysis and returns a concise interpretation so the main agent can recover instead of continuing the same failure pattern.
+
+### User-Prompt-Prioritized Compaction
+
+Context compaction treats user instructions as the highest-priority conversational evidence. During compaction, derived agent chatter, tool traces, and lower-value intermediate details are summarized or removed before user prompts. User requests are retained until the latest possible compaction stage so the active intent survives long sessions.
+
+### Additional PSI Capabilities
+
+- Terminal-native PlanFSM graph rendering and interactive plan review
+- Safer deletion handling for dangerous recursive removal commands
+- Sandboxed test execution with project files mounted read-only
+- Expanded model-provider support, including Fireworks, Hugging Face, NVIDIA, OpenCode, OpenRouter, Together AI, and Vercel AI Gateway
+- Improved multi-provider tool-call history normalization and subagent failure reporting
+
+---
+
+# Upstream Pi Agent
+
 <p align="center">
   <a href="https://pi.dev">
     <img alt="pi logo" src="https://pi.dev/logo-auto.svg" width="128">
@@ -33,16 +105,6 @@ To learn more about Pi:
 | **[@earendil-works/pi-tui](packages/tui)** | Terminal UI library with differential rendering |
 
 For Slack/chat automation and workflows see [earendil-works/pi-chat](https://github.com/earendil-works/pi-chat).
-
-## Additional Features (PSI Fork)
-
-This fork introduces several new capabilities and extensions beyond the original Pi agent:
-
-* **Plan Extension**: Enhanced with terminal-native graph rendering, interactive TUI components for prompt and graph visualization, split layout using HBox, and robust system prompts for structured planning and execution.
-* **RM-Safety Extension**: Added safety mechanisms and tests to prevent dangerous file deletions (`rm -rf` operations).
-* **Test Sandbox Extension**: Added components and tests for isolated testing workflows.
-* **Expanded AI Providers**: Added support for numerous additional model providers including Fireworks, Hugging Face, NVIDIA, OpenCode, OpenRouter, Together AI, and Vercel AI Gateway.
-* **Context Compaction**: Improved memory and context management for the core agent session.
 
 ## Permissions & Containerization
 
