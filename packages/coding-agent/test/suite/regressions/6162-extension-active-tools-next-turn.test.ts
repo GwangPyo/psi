@@ -134,6 +134,96 @@ describe("extension active tools next-turn refresh", () => {
 		}
 	});
 
+	it("executes the validated call when a guided tool subagent returns without calling it", async () => {
+		let executions = 0;
+		const harness = await createHarness({
+			extensionFactories: [
+				(pi) => {
+					pi.registerTool({
+						name: "guided_fallback",
+						label: "Guided fallback",
+						description: "Run the fallback operation",
+						promptGuidelines: ["Run the selected operation exactly once."],
+						parameters: Type.Object({}),
+						execute: async () => {
+							executions++;
+							return { content: [{ type: "text", text: "fallback result" }], details: {} };
+						},
+					});
+				},
+			],
+		});
+
+		try {
+			harness.session.setActiveToolsByName(["guided_fallback"]);
+			let observedResult = false;
+			harness.setResponses([
+				() => fauxAssistantMessage(fauxToolCall("guided_fallback", {}), { stopReason: "toolUse" }),
+				() => fauxAssistantMessage("No tool call"),
+				(context) => {
+					observedResult = context.messages.some(
+						(message) =>
+							message.role === "toolResult" &&
+							message.content.some((part) => part.type === "text" && part.text === "fallback result"),
+					);
+					return fauxAssistantMessage("done");
+				},
+			]);
+
+			await harness.session.prompt("start");
+
+			expect(executions).toBe(1);
+			expect(observedResult).toBe(true);
+		} finally {
+			harness.cleanup();
+		}
+	});
+
+	it("stops and reports the selected provider when guided-tool delegation fails", async () => {
+		let executions = 0;
+		const harness = await createHarness({
+			extensionFactories: [
+				(pi) => {
+					pi.registerTool({
+						name: "guided_provider_failure",
+						label: "Guided provider failure",
+						description: "Do not run after provider failure",
+						promptGuidelines: ["Run the selected operation exactly once."],
+						parameters: Type.Object({}),
+						execute: async () => {
+							executions++;
+							return { content: [{ type: "text", text: "unexpected" }], details: {} };
+						},
+					});
+				},
+			],
+		});
+
+		try {
+			harness.session.setActiveToolsByName(["guided_provider_failure"]);
+			harness.setResponses([
+				() => fauxAssistantMessage(fauxToolCall("guided_provider_failure", {}), { stopReason: "toolUse" }),
+				() => {
+					throw new Error("quota exceeded");
+				},
+			]);
+
+			await harness.session.prompt("start");
+
+			const toolResult = harness.session.messages.find((message) => message.role === "toolResult");
+			const resultText =
+				toolResult?.content
+					.filter((part) => part.type === "text")
+					.map((part) => part.text)
+					.join("\n") ?? "";
+			expect(executions).toBe(0);
+			expect(resultText).toMatch(/^Tool-call subagent .+\/.+ failed: quota exceeded$/);
+			expect(harness.session.messages.at(-1)?.role).toBe("toolResult");
+		} finally {
+			harness.cleanup();
+		}
+	});
+
 	it("records additive active tool changes on the current tool result", async () => {
 		const extensionFactories: ExtensionFactory[] = [
 			(pi) => {

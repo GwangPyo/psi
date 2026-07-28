@@ -90,6 +90,16 @@ function supportsMultimodalFunctionResponse(modelId: string): boolean {
  */
 export function convertMessages<T extends GoogleApiType>(model: Model<T>, context: Context): Content[] {
 	const contents: Content[] = [];
+	const pushContent = (role: "user" | "model", parts: Part[]) => {
+		const lastContent = contents[contents.length - 1];
+		if (lastContent?.role === role) {
+			if (!lastContent.parts) lastContent.parts = [];
+			lastContent.parts.push(...parts);
+		} else {
+			contents.push({ role, parts });
+		}
+	};
+
 	const normalizeToolCallId = (id: string): string => {
 		if (!requiresToolCallId(model.id)) return id;
 		return id.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 64);
@@ -100,10 +110,7 @@ export function convertMessages<T extends GoogleApiType>(model: Model<T>, contex
 	for (const msg of transformedMessages) {
 		if (msg.role === "user") {
 			if (typeof msg.content === "string") {
-				contents.push({
-					role: "user",
-					parts: [{ text: sanitizeSurrogates(msg.content) }],
-				});
+				pushContent("user", [{ text: sanitizeSurrogates(msg.content) }]);
 			} else {
 				const parts: Part[] = msg.content.map((item) => {
 					if (item.type === "text") {
@@ -118,10 +125,7 @@ export function convertMessages<T extends GoogleApiType>(model: Model<T>, contex
 					}
 				});
 				if (parts.length === 0) continue;
-				contents.push({
-					role: "user",
-					parts,
-				});
+				pushContent("user", parts);
 			}
 		} else if (msg.role === "assistant") {
 			const parts: Part[] = [];
@@ -169,10 +173,7 @@ export function convertMessages<T extends GoogleApiType>(model: Model<T>, contex
 			}
 
 			if (parts.length === 0) continue;
-			contents.push({
-				role: "model",
-				parts,
-			});
+			pushContent("model", parts);
 		} else if (msg.role === "toolResult") {
 			// Extract text and image content
 			const textContent = msg.content.filter((c): c is TextContent => c.type === "text");
@@ -209,24 +210,11 @@ export function convertMessages<T extends GoogleApiType>(model: Model<T>, contex
 				},
 			};
 
-			// Cloud Code Assist API requires all function responses to be in a single user turn.
-			// Check if the last content is already a user turn with function responses and merge.
-			const lastContent = contents[contents.length - 1];
-			if (lastContent?.role === "user" && lastContent.parts?.some((p) => p.functionResponse)) {
-				lastContent.parts.push(functionResponsePart);
-			} else {
-				contents.push({
-					role: "user",
-					parts: [functionResponsePart],
-				});
-			}
+			pushContent("user", [functionResponsePart]);
 
 			// For Gemini < 3, add images in a separate user message
 			if (hasImages && !modelSupportsMultimodalFunctionResponse) {
-				contents.push({
-					role: "user",
-					parts: [{ text: "Tool result image:" }, ...imageParts],
-				});
+				pushContent("user", [{ text: "Tool result image:" }, ...imageParts]);
 			}
 		}
 	}

@@ -9,6 +9,8 @@
       "args": [
         "-y",
         "@playwright/mcp@0.0.78",
+        "--browser",
+        "chromium",
         "--headless",
         "--isolated",
         "--output-dir",

@@ -197,7 +197,7 @@ The bound is O(h).`),
 			registerMessageRenderer: (customType: string, renderer: unknown) => messageRenderers.set(customType, renderer),
 			getActiveTools: () => originalTools,
 			getAllTools: () =>
-				["mcp", "research_sources_record", "research_pdf_download", "research_papers_list", "research_pdf"].map(
+				["mcp", "research_candidates_review", "research_report_write", "research_papers_list", "research_pdf"].map(
 					(name) => ({ name }),
 				),
 			registerCommand: (
@@ -211,7 +211,7 @@ The bound is O(h).`),
 		const ctx = {
 			cwd,
 			ui: {
-				editor: vi.fn(),
+				editor: vi.fn(async (_prompt: string, initial: string) => initial),
 				input,
 				notify,
 				setWidget,
@@ -230,13 +230,13 @@ The bound is O(h).`),
 		expect(input).toHaveBeenCalledWith("How many papers should I collect?", "5");
 		expect(sendMessage.mock.calls[0]?.[0]).toMatchObject({
 			customType: "research-stage-instruction",
-			content: expect.stringContaining("Target paper count: 3"),
+			content: expect.stringContaining("Target accepted paper count: 3"),
 			display: false,
 		});
 		expect(sendMessage.mock.calls[0]?.[1]).toEqual({ triggerTurn: true });
-		expect(sendMessage.mock.calls[0]?.[0].content).toContain("Do not extract evidence");
-		expect(notify).toHaveBeenCalledWith("Collecting 3 papers into research/papers…", "info");
-		expect(setActiveTools).toHaveBeenLastCalledWith(["mcp", "research_sources_record", "research_pdf_download"]);
+		expect(sendMessage.mock.calls[0]?.[0].content).toContain("Do not start a discussion or modify code");
+		expect(notify).toHaveBeenCalledWith("Searching and screening papers for direct answerability…", "info");
+		expect(setActiveTools).toHaveBeenLastCalledWith(["mcp", "research_candidates_review", "research_report_write"]);
 		expect(setActiveTools.mock.calls.at(-1)?.[0]).not.toContain("bash");
 		expect(await fs.promises.readdir(path.join(cwd, "research"))).toEqual(
 			expect.arrayContaining(["discussions", "evidence", "manifest.json", "papers"]),

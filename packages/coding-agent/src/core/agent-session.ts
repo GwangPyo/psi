@@ -1153,6 +1153,11 @@ Inspect only that tool's definition, schema, and guidance. Call it exactly once.
 		);
 	}
 
+	/**
+	 * Execute a guided tool through optional isolated delegation.
+	 * Provider failures are surfaced with provider/model context; only a successful
+	 * response that omits the tool call falls back to the original validated call.
+	 */
 	private async _executeGuidedToolThroughSubagent(
 		tool: AgentTool,
 		guidelines: string[],
@@ -1162,6 +1167,7 @@ Inspect only that tool's definition, schema, and guidance. Call it exactly once.
 		onUpdate?: (partialResult: AgentToolResult<any>) => void,
 	): Promise<AgentToolResult<any>> {
 		let completed: { result: AgentToolResult<any>; isError: boolean } | undefined;
+		const subagentModel = this._toolSubagentModel();
 		const delegatedTool: AgentTool = {
 			...tool,
 			execute: async (_delegatedCallId, params) => await tool.execute(toolCallId, params, signal, onUpdate),
@@ -1169,7 +1175,7 @@ Inspect only that tool's definition, schema, and guidance. Call it exactly once.
 		const subagent = new Agent({
 			initialState: {
 				systemPrompt: this._guidedToolSubagentPrompt(tool.name, guidelines),
-				model: this._toolSubagentModel(),
+				model: subagentModel,
 				thinkingLevel: "off",
 				tools: [delegatedTool],
 			},
@@ -1186,15 +1192,38 @@ Inspect only that tool's definition, schema, and guidance. Call it exactly once.
 		const abortSubagent = () => subagent.abort();
 		if (signal?.aborted) subagent.abort();
 		else signal?.addEventListener("abort", abortSubagent, { once: true });
+		let delegationFailure: unknown;
 		try {
 			await subagent.prompt(
 				`Requested tool: ${tool.name}\nProposed arguments:\n${JSON.stringify(proposedArgs, null, 2)}`,
 			);
+		} catch (error) {
+			if (signal?.aborted) throw error;
+			delegationFailure = error;
 		} finally {
 			signal?.removeEventListener("abort", abortSubagent);
 		}
 		if (!completed) {
-			throw new Error(`Tool-call subagent did not call ${tool.name}`);
+			const providerError =
+				subagent.state.errorMessage ??
+				(delegationFailure instanceof Error
+					? delegationFailure.message
+					: delegationFailure === undefined
+						? undefined
+						: String(delegationFailure));
+			if (providerError) {
+				return {
+					content: [
+						{
+							type: "text",
+							text: `Tool-call subagent ${subagentModel.provider}/${subagentModel.id} failed: ${providerError}`,
+						},
+					],
+					details: {},
+					terminate: true,
+				};
+			}
+			return await tool.execute(toolCallId, proposedArgs, signal, onUpdate);
 		}
 		if (completed.isError) {
 			const message = completed.result.content

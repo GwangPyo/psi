@@ -679,15 +679,26 @@ export function createResearchExtension(
 		}
 
 		function restrictStageTools(toolNames: string[], ctx: ExtensionContext): boolean {
-			const available = new Set(pi.getAllTools().map((tool) => tool.name));
-			const missing = toolNames.filter((name) => !available.has(name));
+			const allTools = pi.getAllTools();
+			const availableNames = new Set(allTools.map((tool) => tool.name));
+			const finalToolNames = new Set<string>();
+			const missing: string[] = [];
+
+			for (const name of toolNames) {
+				if (!availableNames.has(name)) {
+					missing.push(name);
+				} else {
+					finalToolNames.add(name);
+				}
+			}
+
 			if (missing.length > 0) {
 				ctx.ui.notify(`Required research tools are unavailable: ${missing.join(", ")}`, "error");
 				return false;
 			}
 			restoreStageTools();
 			stageToolRestore = pi.getActiveTools();
-			pi.setActiveTools(toolNames);
+			pi.setActiveTools(Array.from(finalToolNames));
 			return true;
 		}
 
