@@ -8,7 +8,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import type { AuthEvent, AuthPrompt } from "@earendil-works/pi-ai";
+import type { AuthEvent, AuthPrompt, AuthResult } from "@earendil-works/pi-ai";
 import type { AssistantMessage, ImageContent, Message, Model } from "@earendil-works/pi-ai/compat";
 import type {
 	AutocompleteItem,
@@ -86,6 +86,12 @@ import {
 } from "../../core/model-resolver.ts";
 import { DefaultPackageManager, type ResolvedResource } from "../../core/package-manager.ts";
 import { parseCommandArgs } from "../../core/prompt-templates.ts";
+import {
+	collectProviderRecentUsage,
+	formatProviderUsageReport,
+	type ProviderUsageReportEntry,
+	queryProviderQuota,
+} from "../../core/provider-usage.ts";
 import type { ResourceDiagnostic } from "../../core/resource-loader.ts";
 import { formatMissingSessionCwdPrompt, MissingSessionCwdError } from "../../core/session-cwd.ts";
 import { type SessionEntry, SessionManager, sessionEntryToContextMessages } from "../../core/session-manager.ts";
@@ -2834,6 +2840,11 @@ export class InteractiveMode {
 			if (text === "/session") {
 				this.handleSessionCommand();
 				this.editor.setText("");
+				return;
+			}
+			if (text === "/usage") {
+				this.editor.setText("");
+				await this.handleUsageCommand();
 				return;
 			}
 			if (text === "/changelog") {
@@ -6123,6 +6134,50 @@ export class InteractiveMode {
 
 		this.chatContainer.addChild(new Spacer(1));
 		this.chatContainer.addChild(new Text(info, 1, 0));
+		this.ui.requestRender();
+	}
+
+	/** Show live provider quota and persisted current-session usage, with the heaviest provider last. */
+	private async handleUsageCommand(): Promise<void> {
+		let availableModels = this.session.modelRuntime.getAvailableSnapshot();
+		try {
+			availableModels = await this.session.modelRuntime.getAvailable();
+		} catch (error) {
+			this.showError(error instanceof Error ? error.message : String(error));
+			return;
+		}
+
+		const activeProviderIds = [...new Set(availableModels.map((model) => model.provider))];
+		if (this.session.model?.provider && !activeProviderIds.includes(this.session.model.provider)) {
+			activeProviderIds.push(this.session.model.provider);
+		}
+		if (activeProviderIds.length === 0) {
+			this.showStatus("No active service providers. Use /login to configure one.");
+			return;
+		}
+
+		const recentUsage = collectProviderRecentUsage(this.sessionManager.getEntries(), activeProviderIds);
+		const reportEntries: ProviderUsageReportEntry[] = await Promise.all(
+			recentUsage.map(async (recent) => {
+				let auth: AuthResult | undefined;
+				try {
+					auth = await this.session.modelRuntime.getAuth(recent.providerId);
+				} catch {
+					auth = undefined;
+				}
+				return {
+					providerId: recent.providerId,
+					displayName: this.session.modelRuntime.getProvider(recent.providerId)?.name ?? recent.providerId,
+					recent,
+					quota: await queryProviderQuota(recent.providerId, auth),
+				};
+			}),
+		);
+
+		this.chatContainer.addChild(new Spacer(1));
+		this.chatContainer.addChild(new DynamicBorder());
+		this.chatContainer.addChild(new Text(formatProviderUsageReport(reportEntries), 1, 0));
+		this.chatContainer.addChild(new DynamicBorder());
 		this.ui.requestRender();
 	}
 
