@@ -80,7 +80,7 @@ export function collectProviderRecentUsage(
 const QUOTA_ENDPOINTS = {
 	anthropic: "https://api.anthropic.com/api/oauth/usage",
 	"google-gemini-cli": "https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota",
-	"openai-codex": "https://chatgpt.com/backend-api/codex/usage",
+	"openai-codex": "https://chatgpt.com/backend-api/wham/usage",
 } as const;
 
 interface CodexWindowResponse {
@@ -300,7 +300,8 @@ export async function queryProviderQuota(
 			{
 				headers: {
 					Authorization: `Bearer ${credential}`,
-					...(accountId ? { "chatgpt-account-id": accountId } : {}),
+					...(accountId ? { "ChatGPT-Account-Id": accountId } : {}),
+					"User-Agent": "codex-cli",
 					Accept: "application/json",
 				},
 			},
@@ -363,94 +364,150 @@ export async function queryProviderQuota(
 }
 
 /**
- * Format quota and recent session statistics in least-to-most-used provider
- * order, leaving the heaviest provider at the bottom of the visible report.
+ * Render compact quota and recent-session tables in least-to-most-used provider
+ * order. Equivalent per-model quota buckets are grouped into one row, reset
+ * times use short countdowns, and the heaviest provider remains at the bottom.
  */
 export function formatProviderUsageReport(entries: readonly ProviderUsageReportEntry[], now = Date.now()): string {
-	const lines = ["Provider Usage"];
+	const quotaRows: string[][] = [];
+	const recentRows: string[][] = [];
 
 	for (const entry of entries) {
-		lines.push(
-			"",
-			entry.displayName === entry.providerId ? entry.providerId : `${entry.displayName} (${entry.providerId})`,
-		);
-
-		if (entry.quota.status === "available" && entry.quota.windows.length > 0) {
-			for (const window of entry.quota.windows) {
-				const reset =
-					window.resetAt === undefined
-						? "reset time unavailable"
-						: `resets ${formatResetCountdown(window.resetAt, now)} (${formatTimestamp(window.resetAt)})`;
-
-				lines.push(
-					`  Quota ${window.label}: ${formatPercentage(window.remainingPercent)} remaining, ` +
-						`${formatPercentage(window.usedPercent)} used; ${reset}`,
-				);
-			}
+		const provider = entry.displayName || entry.providerId;
+		const groups = entry.quota.status === "available" ? groupQuotaWindows(entry.quota.windows) : [];
+		if (groups.length === 0) {
+			quotaRows.push([provider, formatQuotaStatus(entry.quota), "—", "—", "—"]);
 		} else {
-			const status = entry.quota.status === "unsupported" ? "unsupported" : "unavailable";
-			const message =
-				entry.quota.message ??
-				(status === "unsupported"
-					? "this provider does not expose quota information"
-					: "quota information could not be retrieved");
-			lines.push(`  Quota ${status}: ${message}`);
+			groups.forEach((group, index) => {
+				quotaRows.push([
+					index === 0 ? provider : "",
+					formatQuotaLabels(entry.providerId, group.labels),
+					formatPercentage(group.window.remainingPercent),
+					formatPercentage(group.window.usedPercent),
+					formatReset(group.window.resetAt, now),
+				]);
+			});
 		}
 
-		lines.push(
-			`  Recent session: ${formatInteger(entry.recent.requests)} requests, ` +
-				`${formatInteger(entry.recent.tokens)} tokens, cost ${formatCost(entry.recent.cost)}, ` +
-				`last used ${entry.recent.lastUsedAt === undefined ? "never" : formatAge(now - entry.recent.lastUsedAt)}`,
-		);
+		recentRows.push([
+			provider,
+			formatInteger(entry.recent.requests),
+			formatInteger(entry.recent.tokens),
+			formatCost(entry.recent.cost),
+			formatLastUsed(entry.recent.lastUsedAt, now),
+		]);
 	}
 
-	return lines.join("\n");
+	return [
+		"Provider Quota",
+		renderPlainTable(["PROVIDER", "QUOTA", "LEFT", "USED", "RESET"], quotaRows, [28, 24, 8, 8, 12], new Set([2, 3])),
+		"",
+		"Recent Session Usage (least → most used)",
+		renderPlainTable(
+			["PROVIDER", "REQUESTS", "TOKENS", "COST", "LAST USED"],
+			recentRows,
+			[28, 10, 14, 10, 12],
+			new Set([1, 2, 3]),
+		),
+	].join("\n");
+}
+
+interface QuotaWindowGroup {
+	window: ProviderQuotaWindow;
+	labels: string[];
+}
+
+function groupQuotaWindows(windows: readonly ProviderQuotaWindow[]): QuotaWindowGroup[] {
+	const groups = new Map<string, QuotaWindowGroup>();
+	for (const window of windows) {
+		const key = `${window.remainingPercent}|${window.usedPercent}|${window.resetAt ?? ""}`;
+		const current = groups.get(key);
+		if (current) current.labels.push(window.label);
+		else groups.set(key, { window, labels: [window.label] });
+	}
+	return [...groups.values()].sort(
+		(a, b) =>
+			a.window.usedPercent - b.window.usedPercent ||
+			(a.window.resetAt ?? Number.POSITIVE_INFINITY) - (b.window.resetAt ?? Number.POSITIVE_INFINITY),
+	);
+}
+
+function formatQuotaLabels(providerId: string, labels: readonly string[]): string {
+	const uniqueLabels = [...new Set(labels)];
+	if (providerId === "google-gemini-cli") {
+		return uniqueLabels.length === 1
+			? uniqueLabels[0].replace(/\s+(?:wtus|requests|tokens)$/i, "")
+			: `${uniqueLabels.length} models`;
+	}
+	return uniqueLabels.length <= 2 ? uniqueLabels.join(", ") : `${uniqueLabels.length} limits`;
+}
+
+function formatQuotaStatus(quota: ProviderQuotaSnapshot): string {
+	if (quota.status === "unsupported") return "unsupported";
+	const httpStatus = quota.message?.match(/\bHTTP\s+(\d{3})\b/i)?.[1];
+	return httpStatus ? `unavailable (HTTP ${httpStatus})` : "unavailable";
+}
+
+function renderPlainTable(
+	headers: readonly string[],
+	rows: readonly (readonly string[])[],
+	caps: readonly number[],
+	rightAligned: ReadonlySet<number>,
+): string {
+	const widths = headers.map((header, index) => {
+		const contentWidth = Math.max(header.length, ...rows.map((row) => (row[index] ?? "").length));
+		return Math.min(contentWidth, caps[index] ?? contentWidth);
+	});
+	const renderRow = (row: readonly string[]) =>
+		row
+			.map((value, index) => {
+				const cell = truncateTableCell(value ?? "", widths[index]);
+				return rightAligned.has(index) ? cell.padStart(widths[index]) : cell.padEnd(widths[index]);
+			})
+			.join(" | ")
+			.trimEnd();
+	const separator = widths.map((width) => "-".repeat(width)).join("-+-");
+	return [renderRow(headers), separator, ...rows.map(renderRow)].join("\n");
+}
+
+function truncateTableCell(value: string, width: number): string {
+	const normalized = value.replace(/[\r\n\t]+/g, " ");
+	if (normalized.length <= width) return normalized;
+	return width <= 1 ? normalized.slice(0, width) : `${normalized.slice(0, width - 1)}…`;
 }
 
 function formatPercentage(value: number): string {
-	return Number.isFinite(value) ? `${Number(value.toFixed(2))}%` : "unknown";
+	return Number.isFinite(value) ? `${Number(value.toFixed(2))}%` : "?";
 }
 
 function formatInteger(value: number): string {
-	return Number.isFinite(value) ? Math.round(value).toLocaleString("en-US") : "unknown";
+	return Number.isFinite(value) ? Math.round(value).toLocaleString("en-US") : "?";
 }
 
 function formatCost(value: number): string {
-	return Number.isFinite(value) ? `$${value.toFixed(4)}` : "unavailable";
+	if (!Number.isFinite(value)) return "?";
+	return value === 0 ? "$0" : `$${value.toFixed(4)}`;
 }
 
-function formatAge(milliseconds: number): string {
-	return milliseconds <= 0 ? "just now" : `${formatDuration(milliseconds)} ago`;
+function formatLastUsed(timestamp: number | undefined, now: number): string {
+	if (timestamp === undefined) return "never";
+	if (!Number.isFinite(timestamp)) return "?";
+	return now <= timestamp ? "now" : `${formatDuration(now - timestamp)} ago`;
 }
 
-function formatResetCountdown(resetAt: number, now: number): string {
-	if (!Number.isFinite(resetAt)) return "at an unknown time";
-	const difference = resetAt - now;
-	return difference > 0
-		? `in ${formatDuration(difference)}`
-		: difference === 0
-			? "now"
-			: `${formatDuration(-difference)} ago`;
+function formatReset(resetAt: number | undefined, now: number): string {
+	if (resetAt === undefined || !Number.isFinite(resetAt)) return "—";
+	return resetAt <= now ? "now" : formatDuration(resetAt - now);
 }
 
 function formatDuration(milliseconds: number): string {
-	let seconds = Math.floor(Math.max(0, milliseconds) / 1000);
-	if (seconds < 60) return `${seconds}s`;
-
-	const minutes = Math.floor(seconds / 60);
-	seconds %= 60;
-	if (minutes < 60) return seconds === 0 ? `${minutes}m` : `${minutes}m ${seconds}s`;
-
+	const minutes = Math.floor(Math.max(0, milliseconds) / 60_000);
+	if (minutes < 1) return "<1m";
+	if (minutes < 60) return `${minutes}m`;
 	const hours = Math.floor(minutes / 60);
 	const remainingMinutes = minutes % 60;
 	if (hours < 24) return remainingMinutes === 0 ? `${hours}h` : `${hours}h ${remainingMinutes}m`;
-
 	const days = Math.floor(hours / 24);
 	const remainingHours = hours % 24;
 	return remainingHours === 0 ? `${days}d` : `${days}d ${remainingHours}h`;
-}
-
-function formatTimestamp(timestamp: number): string {
-	const date = new Date(timestamp);
-	return Number.isNaN(date.getTime()) ? "unknown time" : date.toISOString();
 }

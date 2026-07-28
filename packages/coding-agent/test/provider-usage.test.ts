@@ -77,8 +77,10 @@ describe("provider usage", () => {
 			{ label: "Weekly", usedPercent: 60, remainingPercent: 40, resetAt: 3_000_000 },
 		]);
 		expect(fetchMock).toHaveBeenCalledWith(
-			"https://chatgpt.com/backend-api/codex/usage",
-			expect.objectContaining({ headers: expect.objectContaining({ Authorization: "Bearer not-a-jwt" }) }),
+			"https://chatgpt.com/backend-api/wham/usage",
+			expect.objectContaining({
+				headers: expect.objectContaining({ Authorization: "Bearer not-a-jwt", "User-Agent": "codex-cli" }),
+			}),
 		);
 	});
 
@@ -114,6 +116,12 @@ describe("provider usage", () => {
 								remainingFraction: 0.2,
 								resetTime: "2026-01-02T00:00:00Z",
 							},
+							{
+								modelId: "gemini-3-flash",
+								tokenType: "REQUESTS",
+								remainingFraction: 0.2,
+								resetTime: "2026-01-02T00:00:00Z",
+							},
 						],
 					}),
 					{ status: 200 },
@@ -132,6 +140,21 @@ describe("provider usage", () => {
 			"https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota",
 			expect.objectContaining({ method: "POST", body: JSON.stringify({ project: "project-1" }) }),
 		);
+
+		const report = formatProviderUsageReport(
+			[
+				{
+					providerId: "google-gemini-cli",
+					displayName: "Google Antigravity (Gemini)",
+					recent: { providerId: "google-gemini-cli", requests: 0, tokens: 0, cost: 0 },
+					quota: result,
+				},
+			],
+			Date.parse("2026-01-01T00:00:00Z"),
+		);
+		expect(report).toContain("2 models");
+		expect(report).not.toContain("gemini-3-pro");
+		expect(report).not.toContain("2026-01-02T00:00:00.000Z");
 	});
 
 	it("reports unsupported providers honestly and preserves display order", async () => {
@@ -153,7 +176,9 @@ describe("provider usage", () => {
 
 		const report = formatProviderUsageReport(entries, 3_000);
 		expect(quota.status).toBe("unsupported");
-		expect(report.indexOf("Light (light)")).toBeLessThan(report.indexOf("Heavy (heavy)"));
-		expect(report).toContain("100 tokens");
+		expect(report.indexOf("Light")).toBeLessThan(report.indexOf("Heavy"));
+		expect(report).toContain("100");
+		expect(report).toContain("PROVIDER");
+		expect(report).not.toContain("(light)");
 	});
 });
