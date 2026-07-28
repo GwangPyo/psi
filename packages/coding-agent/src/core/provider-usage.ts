@@ -365,7 +365,8 @@ export async function queryProviderQuota(
 
 /**
  * Render compact quota and recent-session tables in least-to-most-used provider
- * order. Equivalent per-model quota buckets are grouped into one row, reset
+ * order. Equivalent unused per-model quota buckets are grouped into one row,
+ * while every model with non-zero usage remains visible on its own row. Reset
  * times use short countdowns, and the heaviest provider remains at the bottom.
  */
 export function formatProviderUsageReport(entries: readonly ProviderUsageReportEntry[], now = Date.now()): string {
@@ -420,7 +421,10 @@ interface QuotaWindowGroup {
 function groupQuotaWindows(windows: readonly ProviderQuotaWindow[]): QuotaWindowGroup[] {
 	const groups = new Map<string, QuotaWindowGroup>();
 	for (const window of windows) {
-		const key = `${window.remainingPercent}|${window.usedPercent}|${window.resetAt ?? ""}`;
+		const key =
+			window.usedPercent > 0
+				? `nonzero:${groups.size}`
+				: `${window.remainingPercent}|${window.usedPercent}|${window.resetAt ?? ""}`;
 		const current = groups.get(key);
 		if (current) current.labels.push(window.label);
 		else groups.set(key, { window, labels: [window.label] });

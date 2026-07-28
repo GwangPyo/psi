@@ -122,6 +122,8 @@ describe("provider usage", () => {
 								remainingFraction: 0.2,
 								resetTime: "2026-01-02T00:00:00Z",
 							},
+							{ modelId: "unused-one", tokenType: "REQUESTS", remainingFraction: 1 },
+							{ modelId: "unused-two", tokenType: "REQUESTS", remainingFraction: 1 },
 						],
 					}),
 					{ status: 200 },
@@ -153,7 +155,9 @@ describe("provider usage", () => {
 			Date.parse("2026-01-01T00:00:00Z"),
 		);
 		expect(report).toContain("2 models");
-		expect(report).not.toContain("gemini-3-pro");
+		expect(report).toContain("gemini-3-pro");
+		expect(report).toContain("gemini-3-flash");
+		expect(report).not.toContain("unused-one");
 		expect(report).not.toContain("2026-01-02T00:00:00.000Z");
 	});
 
