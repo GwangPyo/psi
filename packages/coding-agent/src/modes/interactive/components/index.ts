@@ -5,6 +5,8 @@ export { BashExecutionComponent } from "./bash-execution.ts";
 export { BorderedLoader } from "./bordered-loader.ts";
 export { BranchSummaryMessageComponent } from "./branch-summary-message.ts";
 export { CompactionSummaryMessageComponent } from "./compaction-summary-message.ts";
+export { ContextUsageMessageComponent } from "./context-usage-message.ts";
+export { CountdownTimer } from "./countdown-timer.ts";
 export { CustomEditor } from "./custom-editor.ts";
 export { CustomMessageComponent } from "./custom-message.ts";
 export { DaxnutsComponent } from "./daxnuts.ts";

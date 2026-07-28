@@ -34,6 +34,16 @@ To learn more about Pi:
 
 For Slack/chat automation and workflows see [earendil-works/pi-chat](https://github.com/earendil-works/pi-chat).
 
+## Additional Features (PSI Fork)
+
+This fork introduces several new capabilities and extensions beyond the original Pi agent:
+
+* **Plan Extension**: Enhanced with terminal-native graph rendering, interactive TUI components for prompt and graph visualization, split layout using HBox, and robust system prompts for structured planning and execution.
+* **RM-Safety Extension**: Added safety mechanisms and tests to prevent dangerous file deletions (`rm -rf` operations).
+* **Test Sandbox Extension**: Added components and tests for isolated testing workflows.
+* **Expanded AI Providers**: Added support for numerous additional model providers including Fireworks, Hugging Face, NVIDIA, OpenCode, OpenRouter, Together AI, and Vercel AI Gateway.
+* **Context Compaction**: Improved memory and context management for the core agent session.
+
 ## Permissions & Containerization
 
 Pi does not include a built-in permission system for restricting filesystem, process, network, or credential access. By default, it runs with the permissions of the user and process that launched it.

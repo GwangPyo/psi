@@ -4,6 +4,9 @@
 
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { contentText, type Message } from "@earendil-works/pi-ai";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { getPackageDir } from "../../config.ts";
 
 // ============================================================================
 // File Operation Tracking
@@ -173,6 +176,24 @@ export function serializeConversation(messages: Message[]): string {
 // Summarization System Prompt
 // ============================================================================
 
-export const SUMMARIZATION_SYSTEM_PROMPT = `You are a context summarization assistant. Your task is to read a conversation between a user and an AI assistant, then produce a structured summary following the exact format specified.
+let summarizationSystemPromptTemplate: string | undefined;
 
-Do NOT continue the conversation. Do NOT respond to any questions in the conversation. ONLY output the structured summary.`;
+function getSummarizationSystemPromptTemplate(): string {
+	if (summarizationSystemPromptTemplate !== undefined) return summarizationSystemPromptTemplate;
+	
+	const packageDir = getPackageDir();
+	const filename = "summarization-system-prompt.md";
+	const candidates = [
+		join(packageDir, "src", "core", "compaction", filename),
+		join(packageDir, "dist", "core", "compaction", filename),
+		join(packageDir, "core", "compaction", filename),
+	];
+	const promptPath = candidates.find((candidate) => existsSync(candidate));
+	if (!promptPath) {
+		throw new Error(`Bundled system prompt "${filename}" was not found.`);
+	}
+	summarizationSystemPromptTemplate = readFileSync(promptPath, "utf8").trim();
+	return summarizationSystemPromptTemplate;
+}
+
+export const SUMMARIZATION_SYSTEM_PROMPT = getSummarizationSystemPromptTemplate();

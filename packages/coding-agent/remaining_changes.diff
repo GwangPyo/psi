@@ -1,0 +1,712 @@
+diff --git a/packages/ai/src/providers/fireworks.models.ts b/packages/ai/src/providers/fireworks.models.ts
+index 5a834ca3..51ff0399 100644
+--- a/packages/ai/src/providers/fireworks.models.ts
++++ b/packages/ai/src/providers/fireworks.models.ts
+@@ -33,6 +33,10 @@ export const FIREWORKS_MODELS = values as {
+ 		id: "accounts/fireworks/models/kimi-k2p7-code";
+ 		provider: "fireworks";
+ 	};
++	"accounts/fireworks/models/kimi-k3": Model<"anthropic-messages"> & {
++		id: "accounts/fireworks/models/kimi-k3";
++		provider: "fireworks";
++	};
+ 	"accounts/fireworks/models/minimax-m2p7": Model<"anthropic-messages"> & {
+ 		id: "accounts/fireworks/models/minimax-m2p7";
+ 		provider: "fireworks";
+@@ -61,4 +65,8 @@ export const FIREWORKS_MODELS = values as {
+ 		id: "accounts/fireworks/routers/kimi-k2p7-code-fast";
+ 		provider: "fireworks";
+ 	};
++	"accounts/fireworks/routers/kimi-k3-fast": Model<"anthropic-messages"> & {
++		id: "accounts/fireworks/routers/kimi-k3-fast";
++		provider: "fireworks";
++	};
+ };
+diff --git a/packages/ai/src/providers/huggingface.models.ts b/packages/ai/src/providers/huggingface.models.ts
+index 4907f2b1..5dd1de9e 100644
+--- a/packages/ai/src/providers/huggingface.models.ts
++++ b/packages/ai/src/providers/huggingface.models.ts
+@@ -153,6 +153,10 @@ export const HUGGINGFACE_MODELS = values as {
+ 		id: "moonshotai/Kimi-K2.7-Code";
+ 		provider: "huggingface";
+ 	};
++	"moonshotai/Kimi-K3": Model<"openai-completions"> & {
++		id: "moonshotai/Kimi-K3";
++		provider: "huggingface";
++	};
+ 	"openai/gpt-oss-120b": Model<"openai-completions"> & {
+ 		id: "openai/gpt-oss-120b";
+ 		provider: "huggingface";
+diff --git a/packages/ai/src/providers/nvidia.models.ts b/packages/ai/src/providers/nvidia.models.ts
+index d3a7973e..d62fc2f1 100644
+--- a/packages/ai/src/providers/nvidia.models.ts
++++ b/packages/ai/src/providers/nvidia.models.ts
+@@ -5,6 +5,14 @@ import values from "./data/nvidia.json" with { type: "json" };
+ import type { Model } from "../types.ts";
+ 
+ export const NVIDIA_MODELS = values as {
++	"google/gemma-3-12b-it": Model<"openai-completions"> & {
++		id: "google/gemma-3-12b-it";
++		provider: "nvidia";
++	};
++	"google/gemma-3-4b-it": Model<"openai-completions"> & {
++		id: "google/gemma-3-4b-it";
++		provider: "nvidia";
++	};
+ 	"meta/llama-3.1-70b-instruct": Model<"openai-completions"> & {
+ 		id: "meta/llama-3.1-70b-instruct";
+ 		provider: "nvidia";
+@@ -29,10 +37,46 @@ export const NVIDIA_MODELS = values as {
+ 		id: "minimaxai/minimax-m3";
+ 		provider: "nvidia";
+ 	};
++	"mistralai/mistral-7b-instruct-v0.3": Model<"openai-completions"> & {
++		id: "mistralai/mistral-7b-instruct-v0.3";
++		provider: "nvidia";
++	};
++	"mistralai/mistral-medium-3.5-128b": Model<"openai-completions"> & {
++		id: "mistralai/mistral-medium-3.5-128b";
++		provider: "nvidia";
++	};
+ 	"moonshotai/kimi-k2.6": Model<"openai-completions"> & {
+ 		id: "moonshotai/kimi-k2.6";
+ 		provider: "nvidia";
+ 	};
++	"nvidia/cosmos-reason2-8b": Model<"openai-completions"> & {
++		id: "nvidia/cosmos-reason2-8b";
++		provider: "nvidia";
++	};
++	"nvidia/llama-3.1-nemotron-70b-instruct": Model<"openai-completions"> & {
++		id: "nvidia/llama-3.1-nemotron-70b-instruct";
++		provider: "nvidia";
++	};
++	"nvidia/llama-3.1-nemotron-nano-8b-v1": Model<"openai-completions"> & {
++		id: "nvidia/llama-3.1-nemotron-nano-8b-v1";
++		provider: "nvidia";
++	};
++	"nvidia/llama-3.1-nemotron-nano-vl-8b-v1": Model<"openai-completions"> & {
++		id: "nvidia/llama-3.1-nemotron-nano-vl-8b-v1";
++		provider: "nvidia";
++	};
++	"nvidia/llama-3.1-nemotron-ultra-253b-v1": Model<"openai-completions"> & {
++		id: "nvidia/llama-3.1-nemotron-ultra-253b-v1";
++		provider: "nvidia";
++	};
++	"nvidia/llama-3.3-nemotron-super-49b-v1": Model<"openai-completions"> & {
++		id: "nvidia/llama-3.3-nemotron-super-49b-v1";
++		provider: "nvidia";
++	};
++	"nvidia/llama-3.3-nemotron-super-49b-v1.5": Model<"openai-completions"> & {
++		id: "nvidia/llama-3.3-nemotron-super-49b-v1.5";
++		provider: "nvidia";
++	};
+ 	"nvidia/nemotron-3-nano-30b-a3b": Model<"openai-completions"> & {
+ 		id: "nvidia/nemotron-3-nano-30b-a3b";
+ 		provider: "nvidia";
+@@ -49,6 +93,10 @@ export const NVIDIA_MODELS = values as {
+ 		id: "nvidia/nemotron-3-ultra-550b-a55b";
+ 		provider: "nvidia";
+ 	};
++	"nvidia/nemotron-nano-12b-v2-vl": Model<"openai-completions"> & {
++		id: "nvidia/nemotron-nano-12b-v2-vl";
++		provider: "nvidia";
++	};
+ 	"nvidia/nvidia-nemotron-nano-9b-v2": Model<"openai-completions"> & {
+ 		id: "nvidia/nvidia-nemotron-nano-9b-v2";
+ 		provider: "nvidia";
+@@ -61,10 +109,18 @@ export const NVIDIA_MODELS = values as {
+ 		id: "openai/gpt-oss-20b";
+ 		provider: "nvidia";
+ 	};
++	"poolside/laguna-xs-2.1": Model<"openai-completions"> & {
++		id: "poolside/laguna-xs-2.1";
++		provider: "nvidia";
++	};
+ 	"stepfun-ai/step-3.7-flash": Model<"openai-completions"> & {
+ 		id: "stepfun-ai/step-3.7-flash";
+ 		provider: "nvidia";
+ 	};
++	"thinkingmachines/inkling": Model<"openai-completions"> & {
++		id: "thinkingmachines/inkling";
++		provider: "nvidia";
++	};
+ 	"z-ai/glm-5.2": Model<"openai-completions"> & {
+ 		id: "z-ai/glm-5.2";
+ 		provider: "nvidia";
+diff --git a/packages/ai/src/providers/opencode.models.ts b/packages/ai/src/providers/opencode.models.ts
+index 809de2b9..5a08ceeb 100644
+--- a/packages/ai/src/providers/opencode.models.ts
++++ b/packages/ai/src/providers/opencode.models.ts
+@@ -197,6 +197,10 @@ export const OPENCODE_MODELS = values as {
+ 		id: "kimi-k2.7-code";
+ 		provider: "opencode";
+ 	};
++	"kimi-k3": Model<"openai-completions"> & {
++		id: "kimi-k3";
++		provider: "opencode";
++	};
+ 	"laguna-s-2.1-free": Model<"openai-completions"> & {
+ 		id: "laguna-s-2.1-free";
+ 		provider: "opencode";
+diff --git a/packages/ai/src/providers/openrouter.models.ts b/packages/ai/src/providers/openrouter.models.ts
+index 8be7c09f..93eb9d6c 100644
+--- a/packages/ai/src/providers/openrouter.models.ts
++++ b/packages/ai/src/providers/openrouter.models.ts
+@@ -945,6 +945,10 @@ export const OPENROUTER_MODELS = values as {
+ 		id: "qwen/qwen3.6-plus";
+ 		provider: "openrouter";
+ 	};
++	"qwen/qwen3.7-flash": Model<"openai-completions"> & {
++		id: "qwen/qwen3.7-flash";
++		provider: "openrouter";
++	};
+ 	"qwen/qwen3.7-max": Model<"openai-completions"> & {
+ 		id: "qwen/qwen3.7-max";
+ 		provider: "openrouter";
+diff --git a/packages/ai/src/providers/together.models.ts b/packages/ai/src/providers/together.models.ts
+index 3ae1225c..94fa7796 100644
+--- a/packages/ai/src/providers/together.models.ts
++++ b/packages/ai/src/providers/together.models.ts
+@@ -49,6 +49,10 @@ export const TOGETHER_MODELS = values as {
+ 		id: "moonshotai/Kimi-K2.7-Code";
+ 		provider: "together";
+ 	};
++	"moonshotai/Kimi-K3": Model<"openai-completions"> & {
++		id: "moonshotai/Kimi-K3";
++		provider: "together";
++	};
+ 	"nvidia/nemotron-3-ultra-550b-a55b": Model<"openai-completions"> & {
+ 		id: "nvidia/nemotron-3-ultra-550b-a55b";
+ 		provider: "together";
+diff --git a/packages/ai/src/providers/vercel-ai-gateway.models.ts b/packages/ai/src/providers/vercel-ai-gateway.models.ts
+index 9bc93341..d8ba0bc8 100644
+--- a/packages/ai/src/providers/vercel-ai-gateway.models.ts
++++ b/packages/ai/src/providers/vercel-ai-gateway.models.ts
+@@ -453,6 +453,10 @@ export const VERCEL_AI_GATEWAY_MODELS = values as {
+ 		id: "moonshotai/kimi-k3";
+ 		provider: "vercel-ai-gateway";
+ 	};
++	"moonshotai/kimi-k3-fast": Model<"anthropic-messages"> & {
++		id: "moonshotai/kimi-k3-fast";
++		provider: "vercel-ai-gateway";
++	};
+ 	"nvidia/nemotron-3-nano-30b-a3b": Model<"anthropic-messages"> & {
+ 		id: "nvidia/nemotron-3-nano-30b-a3b";
+ 		provider: "vercel-ai-gateway";
+diff --git a/packages/coding-agent/src/extensions/plan/fsm/schema.ts b/packages/coding-agent/src/extensions/plan/fsm/schema.ts
+index 53da8835..399548ba 100644
+--- a/packages/coding-agent/src/extensions/plan/fsm/schema.ts
++++ b/packages/coding-agent/src/extensions/plan/fsm/schema.ts
+@@ -3,48 +3,6 @@ import { type Static, Type } from "typebox";
+ const NonEmptyString = Type.String({ minLength: 1 });
+ const StateIdArray = Type.Array(NonEmptyString, { minItems: 1, uniqueItems: true });
+ 
+-export const PlanScalarSchema = Type.Union([Type.String(), Type.Number(), Type.Boolean(), Type.Null()]);
+-
+-export const PlanGuardConditionSchema = Type.Union([
+-	Type.Object({ type: Type.Literal("context_equals"), key: NonEmptyString, value: PlanScalarSchema }),
+-	Type.Object({ type: Type.Literal("context_not_equals"), key: NonEmptyString, value: PlanScalarSchema }),
+-	Type.Object({ type: Type.Literal("context_truthy"), key: NonEmptyString }),
+-	Type.Object({ type: Type.Literal("state_active"), stateId: NonEmptyString }),
+-	Type.Object({ type: Type.Literal("state_completed"), stateId: NonEmptyString }),
+-	Type.Object({
+-		type: Type.Literal("visit_count_lt"),
+-		stateId: NonEmptyString,
+-		value: Type.Integer({ minimum: 1 }),
+-	}),
+-	Type.Object({ type: Type.Literal("transition_count_lt"), value: Type.Integer({ minimum: 1 }) }),
+-]);
+-
+-export const PlanGuardSchema = Type.Object({
+-	mode: Type.Union([Type.Literal("all"), Type.Literal("any")]),
+-	conditions: Type.Array(PlanGuardConditionSchema, { minItems: 1 }),
+-});
+-
+-export const PlanEffectSchema = Type.Union([
+-	Type.Object({ type: Type.Literal("set_context"), key: NonEmptyString, value: PlanScalarSchema }),
+-	Type.Object({ type: Type.Literal("increment_context"), key: NonEmptyString, by: Type.Number() }),
+-]);
+-
+-export const PlanErrorPolicySchema = Type.Object({
+-	strategy: Type.Union([
+-		Type.Literal("propagate"),
+-		Type.Literal("translate"),
+-		Type.Literal("retry"),
+-		Type.Literal("fallback"),
+-		Type.Literal("suppress"),
+-	]),
+-	mayHideFailure: Type.Boolean(),
+-	suppressionAllowed: Type.Boolean(),
+-	justification: Type.Optional(NonEmptyString),
+-	observableSignals: Type.Array(NonEmptyString, { uniqueItems: true }),
+-	retryLimit: Type.Optional(Type.Integer({ minimum: 1 })),
+-	fallbackStateId: Type.Optional(NonEmptyString),
+-});
+-
+ export const PlanStateSchema = Type.Object({
+ 	id: NonEmptyString,
+ 	kind: Type.Union([
+@@ -56,20 +14,9 @@ export const PlanStateSchema = Type.Object({
+ 		Type.Literal("final"),
+ 	]),
+ 	title: NonEmptyString,
+-	abstraction: Type.Union([
+-		Type.Literal("goal"),
+-		Type.Literal("system"),
+-		Type.Literal("component"),
+-		Type.Literal("implementation"),
+-		Type.Literal("verification"),
+-	]),
+-	role: NonEmptyString,
+ 	parentId: Type.Optional(NonEmptyString),
+ 	instruction: Type.Optional(NonEmptyString),
+ 	acceptanceCriteria: Type.Array(NonEmptyString, { uniqueItems: true }),
+-	errorPolicy: Type.Optional(PlanErrorPolicySchema),
+-	maxVisits: Type.Optional(Type.Integer({ minimum: 1 })),
+-	finalOutcome: Type.Optional(Type.Union([Type.Literal("success"), Type.Literal("failure"), Type.Literal("blocked")])),
+ });
+ 
+ export const PlanTransitionSchema = Type.Object({
+@@ -77,20 +24,10 @@ export const PlanTransitionSchema = Type.Object({
+ 	from: StateIdArray,
+ 	to: StateIdArray,
+ 	event: NonEmptyString,
+-	guard: Type.Optional(PlanGuardSchema),
+-	effects: Type.Optional(Type.Array(PlanEffectSchema)),
+-	priority: Type.Optional(Type.Integer()),
+ });
+ 
+ export const PlanParallelismSchema = Type.Object({
+ 	strategy: Type.Union([Type.Literal("parallel"), Type.Literal("sequential")]),
+-	rationale: Type.String({
+-		minLength: 20,
+-		description: "Concrete dependency analysis explaining which work can run concurrently and which must wait",
+-	}),
+-	independentStateGroups: Type.Array(Type.Array(NonEmptyString, { minItems: 2, uniqueItems: true }), {
+-		description: "Groups of branch-entry action states that have no dependency on one another",
+-	}),
+ });
+ 
+ export const PlanMachineSchema = Type.Object({
+@@ -99,23 +36,10 @@ export const PlanMachineSchema = Type.Object({
+ 	goal: NonEmptyString,
+ 	initialStateId: NonEmptyString,
+ 	parallelism: PlanParallelismSchema,
+-	context: Type.Object({
+-		variables: Type.Record(Type.String(), PlanScalarSchema),
+-		errorSuppression: Type.Union([Type.Literal("forbid"), Type.Literal("explicit-only"), Type.Literal("allow")]),
+-	}),
+ 	states: Type.Array(PlanStateSchema, { minItems: 1 }),
+ 	transitions: Type.Array(PlanTransitionSchema),
+-	limits: Type.Object({
+-		maxTransitions: Type.Integer({ minimum: 1 }),
+-		defaultMaxVisitsPerState: Type.Integer({ minimum: 1 }),
+-	}),
+ });
+ 
+-export type PlanScalar = Static<typeof PlanScalarSchema>;
+-export type PlanGuardCondition = Static<typeof PlanGuardConditionSchema>;
+-export type PlanGuard = Static<typeof PlanGuardSchema>;
+-export type PlanEffect = Static<typeof PlanEffectSchema>;
+-export type PlanErrorPolicy = Static<typeof PlanErrorPolicySchema>;
+ export type PlanState = Static<typeof PlanStateSchema>;
+ export type PlanTransition = Static<typeof PlanTransitionSchema>;
+ export type PlanParallelism = Static<typeof PlanParallelismSchema>;
+@@ -138,9 +62,7 @@ export interface PlanRuntimeSnapshot {
+ 	status: PlanRuntimeStatus;
+ 	activeStateIds: string[];
+ 	completedStateIds: string[];
+-	visitCounts: Record<string, number>;
+ 	transitionCount: number;
+-	context: Record<string, PlanScalar>;
+ 	history: PlanTransitionRecord[];
+ 	blockReason?: string;
+ }
+diff --git a/packages/coding-agent/src/extensions/plan/guide.ts b/packages/coding-agent/src/extensions/plan/guide.ts
+index 00aa57ab..2c10f064 100644
+--- a/packages/coding-agent/src/extensions/plan/guide.ts
++++ b/packages/coding-agent/src/extensions/plan/guide.ts
+@@ -1,12 +1,6 @@
+ import { type Static, Type } from "typebox";
+ import {
+-	type PlanErrorPolicy,
+-	PlanErrorPolicySchema,
+-	type PlanGuard,
+-	PlanGuardSchema,
+ 	type PlanMachineDefinition,
+-	type PlanScalar,
+-	PlanScalarSchema,
+ 	type PlanState,
+ 	type PlanTransition,
+ 	validatePlanMachine,
+@@ -15,18 +9,6 @@ import {
+ const NonEmptyString = Type.String({ minLength: 1 });
+ const StateIdArray = Type.Array(NonEmptyString, { minItems: 1, uniqueItems: true });
+ const IndependentStateIdArray = Type.Array(NonEmptyString, { minItems: 2, uniqueItems: true });
+-const ErrorSuppressionSchema = Type.Union([
+-	Type.Literal("forbid"),
+-	Type.Literal("explicit-only"),
+-	Type.Literal("allow"),
+-]);
+-const AbstractionSchema = Type.Union([
+-	Type.Literal("goal"),
+-	Type.Literal("system"),
+-	Type.Literal("component"),
+-	Type.Literal("implementation"),
+-	Type.Literal("verification"),
+-]);
+ const QuestionReviewDimensionSchema = Type.Union([
+ 	Type.Literal("what"),
+ 	Type.Literal("how"),
+@@ -42,26 +24,14 @@ const GuideActionSchema = Type.Object({
+ 	title: NonEmptyString,
+ 	objective: NonEmptyString,
+ 	doneWhen: Type.Array(NonEmptyString, { minItems: 1, uniqueItems: true }),
+-	role: Type.Optional(NonEmptyString),
+-	abstraction: Type.Optional(AbstractionSchema),
+ 	parentId: Type.Optional(NonEmptyString),
+-	maxVisits: Type.Optional(Type.Integer({ minimum: 1 })),
+-	errorPolicy: Type.Optional(PlanErrorPolicySchema),
+ });
+ 
+ const StartGuideSchema = Type.Object(
+ 	{
+-		operation: Type.Literal("start", { description: "Initialize the plan with a goal and context" }),
++		operation: Type.Literal("start", { description: "Initialize the plan with a goal" }),
+ 		id: NonEmptyString,
+ 		goal: NonEmptyString,
+-		context: Type.Optional(Type.Record(Type.String(), PlanScalarSchema)),
+-		errorSuppression: Type.Optional(ErrorSuppressionSchema),
+-		limits: Type.Optional(
+-			Type.Object({
+-				maxTransitions: Type.Optional(Type.Integer({ minimum: 1 })),
+-				defaultMaxVisitsPerState: Type.Optional(Type.Integer({ minimum: 1 })),
+-			}),
+-		),
+ 	},
+ 	{ description: "Start a new plan graph. MUST be the first operation." },
+ );
+@@ -84,7 +54,6 @@ const AddParallelSchema = Type.Object(
+ 		groupId: NonEmptyString,
+ 		after: Type.Optional(StateIdArray),
+ 		branches: Type.Array(GuideActionSchema, { minItems: 2 }),
+-		rationale: NonEmptyString,
+ 	},
+ 	{ description: "Add parallel branches when outcomes do not consume each other's artifacts." },
+ );
+@@ -98,7 +67,6 @@ const AddChoiceSchema = Type.Object(
+ 		branches: Type.Array(
+ 			Type.Object({
+ 				event: NonEmptyString,
+-				guard: Type.Optional(PlanGuardSchema),
+ 				step: GuideActionSchema,
+ 			}),
+ 			{ minItems: 2 },
+@@ -113,8 +81,6 @@ const ConnectSchema = Type.Object(
+ 		from: StateIdArray,
+ 		to: StateIdArray,
+ 		event: NonEmptyString,
+-		guard: Type.Optional(PlanGuardSchema),
+-		priority: Type.Optional(Type.Integer()),
+ 	},
+ 	{ description: "Connect states to create backward loops (e.g., for revisions/retries) or convergences." },
+ );
+@@ -126,11 +92,7 @@ const UpdateStateSchema = Type.Object(
+ 		title: Type.Optional(NonEmptyString),
+ 		objective: Type.Optional(NonEmptyString),
+ 		doneWhen: Type.Optional(Type.Array(NonEmptyString, { minItems: 1, uniqueItems: true })),
+-		role: Type.Optional(NonEmptyString),
+-		abstraction: Type.Optional(AbstractionSchema),
+ 		parentId: Type.Optional(Type.Union([NonEmptyString, Type.Null()])),
+-		maxVisits: Type.Optional(Type.Integer({ minimum: 1 })),
+-		errorPolicy: Type.Optional(PlanErrorPolicySchema),
+ 	},
+ 	{ description: "Modify an existing state." },
+ );
+@@ -261,35 +223,8 @@ export const PlanGuideCommandSchema = Type.Union([
+ export type PlanGuideCommand = Static<typeof PlanGuideCommandSchema>;
+ type GuideAction = Static<typeof GuideActionSchema>;
+ 
+-function normalizeErrorPolicy(input: unknown): unknown {
+-	if (!input || typeof input !== "object" || Array.isArray(input)) return input;
+-
+-	const policy = input as Record<string, unknown>;
+-	if (typeof policy.strategy !== "string") return input;
+-
+-	const strategy = policy.strategy.trim().toLowerCase();
+-	const normalizedStrategy =
+-		strategy === "fail" || strategy === "failure" || strategy === "throw" ? "propagate" : strategy;
+-	if (
+-		normalizedStrategy !== "propagate" &&
+-		normalizedStrategy !== "translate" &&
+-		normalizedStrategy !== "retry" &&
+-		normalizedStrategy !== "fallback" &&
+-		normalizedStrategy !== "suppress"
+-	) {
+-		return input;
+-	}
+-	if (normalizedStrategy === policy.strategy) return input;
+-	return { ...policy, strategy: normalizedStrategy };
+-}
+-
+ function normalizeGuideAction(input: unknown): unknown {
+-	if (!input || typeof input !== "object" || Array.isArray(input)) return input;
+-
+-	const action = input as Record<string, unknown>;
+-	if (action.errorPolicy === undefined) return input;
+-	const errorPolicy = normalizeErrorPolicy(action.errorPolicy);
+-	return errorPolicy === action.errorPolicy ? input : { ...action, errorPolicy };
++	return input;
+ }
+ 
+ export function preparePlanGuideArguments(
+@@ -332,9 +267,6 @@ export function preparePlanGuideArguments(
+ 				return step === branch.step ? inputBranch : { ...branch, step };
+ 			}),
+ 		};
+-	} else if (normalized.operation === "update_state" && normalized.errorPolicy !== undefined) {
+-		const errorPolicy = normalizeErrorPolicy(normalized.errorPolicy);
+-		if (errorPolicy !== normalized.errorPolicy) normalized = { ...normalized, errorPolicy };
+ 	} else if (normalized.operation === "revise" && pendingReviewDimension) {
+ 		normalized = { ...normalized, dimension: pendingReviewDimension };
+ 	}
+@@ -346,17 +278,9 @@ export interface PlanGuideDraft {
+ 	id?: string;
+ 	goal?: string;
+ 	initialStateId?: string;
+-	context: {
+-		variables: Record<string, PlanScalar>;
+-		errorSuppression: "forbid" | "explicit-only" | "allow";
+-	};
+ 	states: PlanState[];
+ 	transitions: PlanTransition[];
+-	parallelGroups: Array<{ stateIds: string[]; rationale: string }>;
+-	limits: {
+-		maxTransitions?: number;
+-		defaultMaxVisitsPerState?: number;
+-	};
++	parallelGroups: Array<{ stateIds: string[] }>;
+ 	reviews: Array<{
+ 		dimension: PlanGuideReviewDimension;
+ 		assessment: string;
+@@ -394,37 +318,22 @@ export interface PlanGuideApplyResult {
+ 
+ export function createPlanGuideDraft(): PlanGuideDraft {
+ 	return {
+-		context: { variables: {}, errorSuppression: "forbid" },
+ 		states: [],
+ 		transitions: [],
+ 		parallelGroups: [],
+-		limits: {},
+ 		reviews: [],
+ 		nextTransitionNumber: 1,
+ 	};
+ }
+ 
+-function visibleFailurePolicy(): PlanErrorPolicy {
+-	return {
+-		strategy: "propagate",
+-		mayHideFailure: false,
+-		suppressionAllowed: false,
+-		observableSignals: [],
+-	};
+-}
+-
+ function actionState(action: GuideAction): PlanState {
+ 	return {
+ 		id: action.id,
+ 		kind: "action",
+ 		title: action.title,
+-		abstraction: action.abstraction ?? "implementation",
+-		role: action.role ?? "engineering",
+ 		instruction: action.objective,
+ 		acceptanceCriteria: action.doneWhen,
+-		errorPolicy: action.errorPolicy ?? visibleFailurePolicy(),
+ 		parentId: action.parentId,
+-		maxVisits: action.maxVisits,
+ 	};
+ }
+ 
+@@ -469,7 +378,7 @@ function eventForSources(draft: PlanGuideDraft, stateIds: string[]): string {
+ 	const stateById = new Map(draft.states.map((state) => [state.id, state]));
+ 	return stateIds.every((stateId) => {
+ 		const kind = stateById.get(stateId)?.kind;
+-		return kind === "fork" || kind === "join" || kind === "checkpoint";
++		return kind === "fork" || kind === "join";
+ 	})
+ 		? "AUTO"
+ 		: "SUCCESS";
+@@ -539,12 +448,7 @@ function validateDependencyAudit(draft: PlanGuideDraft): string[] {
+ 	const stateById = new Map(draft.states.map((state) => [state.id, state]));
+ 	const taskGroups = new Map<string, string[]>();
+ 	for (const state of draft.states) {
+-		if (
+-			state.kind !== "action" ||
+-			(state.abstraction !== "component" &&
+-				state.abstraction !== "implementation" &&
+-				state.abstraction !== "verification")
+-		) {
++		if (state.kind !== "action") {
+ 			continue;
+ 		}
+ 		const groupId = state.parentId ?? "__root__";
+@@ -560,14 +464,9 @@ function validateDependencyAudit(draft: PlanGuideDraft): string[] {
+ 			const state = stateById.get(stateId);
+ 			if (!state) {
+ 				errors.push(`Dependency audit independent group ${groupIndex + 1} references missing state "${stateId}".`);
+-			} else if (
+-				state.kind !== "action" ||
+-				(state.abstraction !== "component" &&
+-					state.abstraction !== "implementation" &&
+-					state.abstraction !== "verification")
+-			) {
++			} else if (state.kind !== "action") {
+ 				errors.push(
+-					`Dependency audit independent state "${stateId}" must be a component, implementation, or verification action.`,
++					`Dependency audit independent state "${stateId}" must be an action state.`,
+ 				);
+ 			} else {
+ 				parentIds.add(state.parentId ?? "__root__");
+@@ -694,30 +593,16 @@ function finalizeGuide(draft: PlanGuideDraft): PlanGuideApplyResult {
+ 	}
+ 	const parallelism =
+ 		draft.parallelGroups.length > 0
+-			? {
+-					strategy: "parallel" as const,
+-					rationale: draft.parallelGroups.map((group) => group.rationale).join(" "),
+-					independentStateGroups: draft.parallelGroups.map((group) => [...group.stateIds]),
+-				}
+-			: {
+-					strategy: "sequential" as const,
+-					rationale:
+-						"All submitted work is connected by explicit sequence, choice, convergence, or revision dependencies.",
+-					independentStateGroups: [],
+-				};
++			? { strategy: "parallel" as const }
++			: { strategy: "sequential" as const };
+ 	const machine: PlanMachineDefinition = {
+ 		version: 1,
+ 		id: draft.id!,
+ 		goal: draft.goal!,
+ 		initialStateId: draft.initialStateId,
+ 		parallelism,
+-		context: structuredClone(draft.context),
+ 		states: structuredClone(draft.states),
+ 		transitions: structuredClone(draft.transitions),
+-		limits: {
+-			maxTransitions: draft.limits.maxTransitions ?? Math.max(30, draft.states.length * 4),
+-			defaultMaxVisitsPerState: draft.limits.defaultMaxVisitsPerState ?? 3,
+-		},
+ 	};
+ 	const validation = validatePlanMachine(machine);
+ 	return {
+@@ -740,11 +625,6 @@ export function applyPlanGuideCommand(current: PlanGuideDraft, command: PlanGuid
+ 			}
+ 			draft.id = command.id;
+ 			draft.goal = command.goal;
+-			draft.context = {
+-				variables: command.context ?? {},
+-				errorSuppression: command.errorSuppression ?? "forbid",
+-			};
+-			draft.limits = command.limits ?? {};
+ 			break;
+ 
+ 		case "add_sequence": {
+@@ -774,10 +654,8 @@ export function applyPlanGuideCommand(current: PlanGuideDraft, command: PlanGuid
+ 			const branches = command.branches.map(actionState);
+ 			const checkpoints = branches.map((state) => ({
+ 				id: `${command.groupId}__${state.id}__done`,
+-				kind: "checkpoint" as const,
++				kind: "action" as const,
+ 				title: `${state.title} complete`,
+-				abstraction: "component" as const,
+-				role: "scheduler",
+ 				acceptanceCriteria: [],
+ 			}));
+ 			assertUniqueStateIds(draft, [
+@@ -791,8 +669,6 @@ export function applyPlanGuideCommand(current: PlanGuideDraft, command: PlanGuid
+ 					id: forkId,
+ 					kind: "fork",
+ 					title: `${command.groupId} fork`,
+-					abstraction: "component",
+-					role: "scheduler",
+ 					acceptanceCriteria: [],
+ 				},
+ 				...branches,
+@@ -801,8 +677,6 @@ export function applyPlanGuideCommand(current: PlanGuideDraft, command: PlanGuid
+ 					id: joinId,
+ 					kind: "join",
+ 					title: `${command.groupId} join`,
+-					abstraction: "component",
+-					role: "scheduler",
+ 					acceptanceCriteria: [],
+ 				},
+ 			);
+@@ -831,7 +705,6 @@ export function applyPlanGuideCommand(current: PlanGuideDraft, command: PlanGuid
+ 			});
+ 			draft.parallelGroups.push({
+ 				stateIds: branches.map((state) => state.id),
+-				rationale: command.rationale,
+ 			});
+ 			changed = true;
+ 			break;
+@@ -846,8 +719,6 @@ export function applyPlanGuideCommand(current: PlanGuideDraft, command: PlanGuid
+ 					id: command.choiceId,
+ 					kind: "choice",
+ 					title: command.title,
+-					abstraction: "component",
+-					role: "decision",
+ 					acceptanceCriteria: [],
+ 				},
+ 				...branchStates,
+@@ -859,8 +730,6 @@ export function applyPlanGuideCommand(current: PlanGuideDraft, command: PlanGuid
+ 					from: [command.choiceId],
+ 					to: [branchStates[index]!.id],
+ 					event: branch.event,
+-					guard: branch.guard as PlanGuard | undefined,
+-					priority: command.branches.length - index,
+ 				});
+ 			}
+ 			changed = true;
+@@ -874,8 +743,6 @@ export function applyPlanGuideCommand(current: PlanGuideDraft, command: PlanGuid
+ 				from: command.from,
+ 				to: command.to,
+ 				event: command.event,
+-				guard: command.guard as PlanGuard | undefined,
+-				priority: command.priority,
+ 			});
+ 			changed = true;
+ 			break;
+@@ -892,11 +759,7 @@ export function applyPlanGuideCommand(current: PlanGuideDraft, command: PlanGuid
+ 				title: command.title ?? state.title,
+ 				instruction: command.objective ?? state.instruction,
+ 				acceptanceCriteria: command.doneWhen ?? state.acceptanceCriteria,
+-				role: command.role ?? state.role,
+-				abstraction: command.abstraction ?? state.abstraction,
+ 				parentId: command.parentId === null ? undefined : (command.parentId ?? state.parentId),
+-				maxVisits: command.maxVisits ?? state.maxVisits,
+-				errorPolicy: command.errorPolicy ?? state.errorPolicy,
+ 			};
+ 			if (JSON.stringify(updatedState) === JSON.stringify(state)) {
+ 				throw new Error(`Update for state "${command.stateId}" did not change any PlanFSM field.`);
+@@ -914,10 +777,7 @@ export function applyPlanGuideCommand(current: PlanGuideDraft, command: PlanGuid
+ 				id: command.id,
+ 				kind: "final",
+ 				title: command.title ?? command.id,
+-				abstraction: "verification",
+-				role: "scheduler",
+ 				acceptanceCriteria: [],
+-				finalOutcome: command.outcome ?? "success",
+ 			});
+ 			draft = appendTransition(draft, {
+ 				from: command.from,
+@@ -1129,8 +989,7 @@ export function formatPlanGuideGrounding(draft: PlanGuideDraft): string {
+ 			? ["- none"]
+ 			: draft.states.map((state) => {
+ 					const parent = state.parentId ? ` parent=${state.parentId}` : "";
+-					const abstraction = state.abstraction ? `/${state.abstraction}` : "";
+-					return `- ${state.id} [${state.kind}${abstraction}${parent}]: ${state.title}`;
++					return `- ${state.id} [${state.kind}${parent}]: ${state.title}`;
+ 				});
+ 	const transitionLines =
+ 		draft.transitions.length === 0

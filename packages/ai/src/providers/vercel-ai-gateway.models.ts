@@ -453,6 +453,10 @@ export const VERCEL_AI_GATEWAY_MODELS = values as {
 		id: "moonshotai/kimi-k3";
 		provider: "vercel-ai-gateway";
 	};
+	"moonshotai/kimi-k3-fast": Model<"anthropic-messages"> & {
+		id: "moonshotai/kimi-k3-fast";
+		provider: "vercel-ai-gateway";
+	};
 	"nvidia/nemotron-3-nano-30b-a3b": Model<"anthropic-messages"> & {
 		id: "nvidia/nemotron-3-nano-30b-a3b";
 		provider: "vercel-ai-gateway";

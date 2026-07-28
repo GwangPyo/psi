@@ -7,8 +7,6 @@
 
 import { Key, Text, HBox, type Component } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
-import { getAgentDir } from "../../config.ts";
-import { SettingsManager } from "../../core/settings-manager.ts";
 import type { ExtensionAPI, ExtensionContext } from "../../core/extensions/types.ts";
 import { type AnimatedStatus, startAnimatedStatus } from "../animated-status.ts";
 import {
@@ -33,16 +31,14 @@ import {
 import { buildExecutionSystemPrompt, buildPlanSystemPrompt } from "./prompt.ts";
 import { PlanGraphComponent } from "./tui-graph.ts";
 import { isSafeCommand } from "./utils.ts";
-import { swManager } from "../structured-writing/index.ts";
 
 const GUIDE_PLAN_TOOL = "guide_plan";
 const PLAN_GRILL_TOOL = "plan_grill";
 const TRANSITION_PLAN_TOOL = "plan_transition";
 const PLAN_DRAFTING_WIDGET = "plan-drafting";
-const SCOUT_TOOL = "scout";
-const PLAN_MODE_TOOLS = [SCOUT_TOOL, PLAN_GRILL_TOOL, GUIDE_PLAN_TOOL];
-const NORMAL_MODE_TOOLS = ["read", "bash", "edit", "write", "grep", "find", "ls"];
-const PLAN_MODE_DISABLED_TOOLS = new Set<string>(["edit", "write", "read", "bash", "grep", "find", "ls", TRANSITION_PLAN_TOOL]);
+const PLAN_MODE_TOOLS = ["read", "bash", "grep", "find", "ls", PLAN_GRILL_TOOL, GUIDE_PLAN_TOOL];
+const NORMAL_MODE_TOOLS = ["read", "bash", "edit", "write"];
+const PLAN_MODE_DISABLED_TOOLS = new Set<string>(["edit", "write", TRANSITION_PLAN_TOOL]);
 const PLAN_CONTROL_TOOLS = new Set<string>([PLAN_GRILL_TOOL, GUIDE_PLAN_TOOL, TRANSITION_PLAN_TOOL]);
 const PLAN_MANAGED_TOOLS = new Set<string>([...PLAN_MODE_TOOLS, ...NORMAL_MODE_TOOLS, ...PLAN_CONTROL_TOOLS]);
 
@@ -257,7 +253,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 	function getPlanModeTools(activeToolNames: string[]): string[] {
 		return uniqueToolNames([
 			...withoutPlanControlTools(activeToolNames).filter((name) => !PLAN_MODE_DISABLED_TOOLS.has(name)),
-			...PLAN_MODE_TOOLS,
+			...PLAN_MODE_TOOLS.filter((name) => name !== PLAN_GRILL_TOOL || (grillBeforePlanning && !grillCompleted)),
 		]);
 	}
 
@@ -316,19 +312,18 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 	}
 
 	async function togglePlanMode(ctx: ExtensionContext): Promise<void> {
-		if (planModeEnabled || executionMode || machineDefinition) {
+		if (planModeEnabled) {
 			planModeEnabled = false;
 			executionMode = false;
 			grillBeforePlanning = false;
 			clearPlan();
 			restoreNormalModeTools();
-			ctx.ui.notify("Plan disabled and cleared. Full access restored.");
+			ctx.ui.notify("Plan mode disabled. Full access restored.");
 		} else {
 			grillBeforePlanning = ctx.hasUI
 				? await ctx.ui.confirm("Grill you?", "Inspect the implementation before making the plan.")
 				: false;
 			planModeEnabled = true;
-			swManager.enable();
 			executionMode = false;
 			clearPlan();
 			enablePlanModeTools();
@@ -405,14 +400,8 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		parameters: PlanGrillParameters,
 		executionMode: "sequential",
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-			if (!planModeEnabled) {
-				throw new Error("plan_grill is only available in plan mode.");
-			}
-			if (!grillBeforePlanning || grillCompleted) {
-				return {
-					content: [{ type: "text", text: "The grill is already completed or was skipped. Please proceed with guide_plan." }],
-					details: { completed: true },
-				};
+			if (!planModeEnabled || !grillBeforePlanning) {
+				throw new Error("plan_grill is only available when grill-before-planning is active.");
 			}
 			if (!ctx.hasUI) throw new Error("plan_grill requires interactive UI.");
 
@@ -565,50 +554,6 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 				},
 			};
 		},
-	});
-
-	pi.registerTool({
-		name: SCOUT_TOOL,
-		label: "Scout Information",
-		description: "Use this tool to launch a lightweight background scout agent that will gather information from the codebase using read tools (bash, grep, find, ls, read).",
-		promptSnippet: "Use the scout tool to gather information instead of reading directly",
-		promptGuidelines: [
-			"Since you do not have read tools during planning, call the scout tool when you need information about the codebase.",
-			"Provide a clear research prompt to the scout, detailing exactly what you want it to look for."
-		],
-		parameters: Type.Object({
-			prompt: Type.String({ description: "Instructions for the scout agent on what to investigate." })
-		}),
-		executionMode: "parallel",
-		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-			const scoutModelReference = SettingsManager.create(ctx.cwd, getAgentDir(), { projectTrusted: ctx.isProjectTrusted ? ctx.isProjectTrusted() : true }).getSubagentDefaultModel();
-			let scoutModel = ctx.model;
-			if (scoutModelReference) {
-				const [provider, id] = scoutModelReference.split("/");
-				scoutModel = ctx.modelRegistry.find(provider, id) ?? ctx.model;
-			}
-			if (!scoutModel) {
-				throw new Error("No model available for the scout agent.");
-			}
-			ctx.ui.notify("Scout agent is gathering information...", "info");
-			const allMessages = ctx.sessionManager.buildSessionContext().messages;
-			const recentContext = allMessages.slice(-20);
-			const contextString = JSON.stringify(recentContext, null, 2);
-			const scout = pi.spawnAgent({
-				model: scoutModel,
-				systemPrompt: `${ctx.getSystemPrompt()}\n\n[Main Agent Context (Last 20 Turns)]\n${contextString}\n\nYou are the Scout Agent. Your task is to investigate the codebase and gather all necessary information for the user's research prompt: ${params.prompt}\n\nYou must use read tools (bash, grep, find, ls, read).\n\nWhen you are done, output a comprehensive research report summarizing your findings. Do NOT attempt to write a plan yourself.`,
-				toolNames: ["read", "bash", "grep", "find", "ls"],
-			});
-			try {
-				const scoutReport = await scout.prompt(params.prompt);
-				return {
-					content: [{ type: "text", text: `Scout Report:\n${scoutReport}` }],
-					details: { completed: true },
-				};
-			} finally {
-				scout.dispose();
-			}
-		}
 	});
 
 	pi.registerCommand("plan", {

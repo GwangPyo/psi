@@ -945,6 +945,10 @@ export const OPENROUTER_MODELS = values as {
 		id: "qwen/qwen3.6-plus";
 		provider: "openrouter";
 	};
+	"qwen/qwen3.7-flash": Model<"openai-completions"> & {
+		id: "qwen/qwen3.7-flash";
+		provider: "openrouter";
+	};
 	"qwen/qwen3.7-max": Model<"openai-completions"> & {
 		id: "qwen/qwen3.7-max";
 		provider: "openrouter";

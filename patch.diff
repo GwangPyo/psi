@@ -1,0 +1,45 @@
+--- packages/coding-agent/src/extensions/plan/index.ts
++++ packages/coding-agent/src/extensions/plan/index.ts
+@@ -255,7 +255,7 @@
+ 	function getPlanModeTools(activeToolNames: string[]): string[] {
+ 		return uniqueToolNames([
+ 			...withoutPlanControlTools(activeToolNames).filter((name) => !PLAN_MODE_DISABLED_TOOLS.has(name)),
+-			...PLAN_MODE_TOOLS.filter((name) => name !== PLAN_GRILL_TOOL || (grillBeforePlanning && !grillCompleted)),
++			...PLAN_MODE_TOOLS,
+ 		]);
+ 	}
+ 
+@@ -315,7 +315,7 @@
+ 	}
+ 
+ 	async function togglePlanMode(ctx: ExtensionContext): Promise<void> {
+-		if (planModeEnabled || executionMode) {
++		if (planModeEnabled || executionMode || machineDefinition) {
+ 			if (planModeEnabled && grillBeforePlanning && !grillCompleted) {
+ 				const choice = await ctx.ui.select("Plan mode is active but grill is pending.", ["Skip Grill & Unlock Plan", "Cancel Plan Mode", "Resume"]);
+ 				if (choice === "Skip Grill & Unlock Plan") {
+@@ -335,7 +335,7 @@
+ 			grillBeforePlanning = false;
+ 			clearPlan();
+ 			restoreNormalModeTools();
+-			ctx.ui.notify("Plan mode disabled. Full access restored.");
++			ctx.ui.notify("Plan disabled and cleared. Full access restored.");
+ 		} else {
+ 			grillBeforePlanning = ctx.hasUI
+ 				? await ctx.ui.confirm("Grill you?", "Inspect the implementation before making the plan.")
+@@ -461,8 +461,14 @@
+ 		parameters: PlanGrillParameters,
+ 		executionMode: "sequential",
+ 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+-			if (!planModeEnabled || !grillBeforePlanning) {
+-				throw new Error("plan_grill is only available when grill-before-planning is active.");
++			if (!planModeEnabled) {
++				throw new Error("plan_grill is only available in plan mode.");
++			}
++			if (!grillBeforePlanning || grillCompleted) {
++				return {
++					content: [{ type: "text", text: "The grill is already completed or was skipped. Please proceed with guide_plan." }],
++					details: { completed: true },
++				};
+ 			}
+ 			if (!ctx.hasUI) throw new Error("plan_grill requires interactive UI.");

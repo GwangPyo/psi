@@ -111,6 +111,7 @@ import { BashExecutionComponent } from "./components/bash-execution.ts";
 import { BorderedLoader } from "./components/bordered-loader.ts";
 import { BranchSummaryMessageComponent } from "./components/branch-summary-message.ts";
 import { CompactionSummaryMessageComponent } from "./components/compaction-summary-message.ts";
+import { ContextUsageMessageComponent } from "./components/context-usage-message.ts";
 import { setResolvedResourceEnabled } from "./components/config-selector.ts";
 import { CustomEditor } from "./components/custom-editor.ts";
 import { CustomEntryComponent } from "./components/custom-entry.ts";
@@ -2875,6 +2876,11 @@ export class InteractiveMode {
 				const customInstructions = text.startsWith("/compact ") ? text.slice(9).trim() : undefined;
 				this.editor.setText("");
 				await this.handleCompactCommand(customInstructions);
+				return;
+			}
+			if (text === "/context") {
+				this.editor.setText("");
+				await this.handleContextCommand();
 				return;
 			}
 			if (text === "/reload") {
@@ -6294,6 +6300,33 @@ export class InteractiveMode {
 		this.chatContainer.addChild(
 			new Text(`${theme.fg("accent", "✓ Debug log written")}\n${theme.fg("muted", debugLogPath)}`, 1, 1),
 		);
+		this.ui.requestRender();
+	}
+
+	private async handleContextCommand(): Promise<void> {
+		const sessionContext = this.session.sessionManager.buildSessionContext();
+		let llmMessages: any[] = [];
+		try {
+			llmMessages = await this.session.agent.convertToLlm(this.session.agent.state.messages);
+		} catch (err) {
+			this.showError("Error retrieving messages: " + String(err));
+			return;
+		}
+		
+		const systemPromptText = "System prompt";
+		const systemToolsLength = 50000;
+		const skillsLength = 1500;
+		const subagentsLength = 2000;
+		
+		this.chatContainer.addChild(new Spacer(1));
+		this.chatContainer.addChild(new ContextUsageMessageComponent(
+			this.session, 
+			llmMessages, 
+			systemPromptText, 
+			systemToolsLength, 
+			skillsLength, 
+			subagentsLength
+		));
 		this.ui.requestRender();
 	}
 

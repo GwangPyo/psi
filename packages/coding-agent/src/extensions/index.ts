@@ -7,6 +7,7 @@ import projectGraphExtension from "./project-graph/index.ts";
 import researchExtension from "./research/index.ts";
 import rmSafetyExtension from "./rm-safety/index.ts";
 import testSandboxExtension from "./test-sandbox/index.ts";
+import structuredWritingExtension from "./structured-writing/index.ts";
 
 export const builtInExtensions: InlineExtension[] = [
 	{ name: "rm-safety", factory: rmSafetyExtension, hidden: true },
@@ -17,4 +18,5 @@ export const builtInExtensions: InlineExtension[] = [
 	{ name: "test-sandbox", factory: testSandboxExtension, hidden: true },
 	{ name: "extension-manager", factory: extensionManagerExtension, hidden: true },
 	{ name: "llama.cpp", factory: llamaExtension, hidden: true },
+	{ name: "structured-writing", factory: structuredWritingExtension, hidden: true },
 ];

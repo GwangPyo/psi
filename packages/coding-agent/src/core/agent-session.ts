@@ -944,6 +944,7 @@ export class AgentSession {
 					options.thinkingLevel ?? this.thinkingLevel,
 				) as ThinkingLevel,
 				tools,
+				messages: options.initialMessages ?? [],
 			},
 			convertToLlm: this.agent.convertToLlm,
 			streamFn: this.agent.streamFunction,
@@ -2004,8 +2005,21 @@ Inspect only that tool's definition, schema, and guidance. Call it exactly once.
 			let extensionCompaction: CompactionResult | undefined;
 			let fromExtension = false;
 
-			if (this._extensionRunner.hasHandlers("session_before_compact")) {
-				const result = (await this._extensionRunner.emit({
+			let compactionModel = this.model;
+			const bgModelRef = this.settingsManager.getBackgroundAgentDefaultModel();
+			if (bgModelRef) {
+				const [providerId, ...rest] = bgModelRef.split("/");
+				const modelId = rest.join("/");
+				const bgModel = this._modelRuntime.getModel(providerId, modelId);
+				if (bgModel) compactionModel = bgModel;
+			}
+			const authResult = await this._getSummarizationRequestAuth(compactionModel);
+			const compactApiKey = authResult.apiKey;
+			const compactHeaders = authResult.headers;
+			const compactEnv = authResult.env;
+
+			try {
+				const result = (await this._extensionRunner?.emit({
 					type: "session_before_compact",
 					preparation,
 					branchEntries: pathEntries,
@@ -2015,7 +2029,7 @@ Inspect only that tool's definition, schema, and guidance. Call it exactly once.
 					signal: this._compactionAbortController.signal,
 				})) as SessionBeforeCompactResult | undefined;
 
-				if (result?.cancel) {
+				if (this._compactionAbortController.signal.aborted) {
 					throw new Error("Compaction cancelled");
 				}
 
@@ -2023,6 +2037,9 @@ Inspect only that tool's definition, schema, and guidance. Call it exactly once.
 					extensionCompaction = result.compaction;
 					fromExtension = true;
 				}
+			} catch (error) {
+				// Fallback to default if extension fails
+				console.error("[AgentSession] Extension compaction failed:", error);
 			}
 
 			let summary: string;
@@ -2042,14 +2059,14 @@ Inspect only that tool's definition, schema, and guidance. Call it exactly once.
 				// Generate compaction result
 				const result = await compact(
 					preparation,
-					this.model,
-					apiKey,
-					headers,
+					compactionModel,
+					compactApiKey,
+					compactHeaders,
 					customInstructions,
 					this._compactionAbortController.signal,
 					this.thinkingLevel,
 					this.agent.streamFunction,
-					env,
+					compactEnv,
 					this.settingsManager.getRetrySettings(),
 					this._summarizationRetryCallbacks({ source: "compaction", reason: "manual" }),
 				);
@@ -2248,17 +2265,26 @@ Inspect only that tool's definition, schema, and guidance. Call it exactly once.
 				return false;
 			}
 
+			let compactionModel = this.model;
+			const bgModelRef = this.settingsManager.getBackgroundAgentDefaultModel();
+			if (bgModelRef) {
+				const [providerId, ...rest] = bgModelRef.split("/");
+				const modelId = rest.join("/");
+				const bgModel = this._modelRuntime.getModel(providerId, modelId);
+				if (bgModel) compactionModel = bgModel;
+			}
+
 			let apiKey: string | undefined;
 			let headers: Record<string, string> | undefined;
 			let env: Record<string, string> | undefined;
 			if (this.agent.streamFunction === streamSimple) {
-				const authResult = await this._modelRuntime.getAuth(this.model);
+				const authResult = await this._modelRuntime.getAuth(compactionModel);
 				if (!authResult?.auth.apiKey) return false;
 				apiKey = authResult.auth.apiKey;
 				headers = withoutDeletedHeaders(authResult.auth.headers);
 				env = authResult.env;
 			} else {
-				({ apiKey, headers, env } = await this._getSummarizationRequestAuth(this.model));
+				({ apiKey, headers, env } = await this._getSummarizationRequestAuth(compactionModel));
 			}
 
 			const pathEntries = this.sessionManager.getBranch();
@@ -2320,7 +2346,7 @@ Inspect only that tool's definition, schema, and guidance. Call it exactly once.
 				// Generate compaction result
 				const compactResult = await compact(
 					preparation,
-					this.model,
+					compactionModel,
 					apiKey,
 					headers,
 					undefined,
@@ -3173,11 +3199,18 @@ Inspect only that tool's definition, schema, and guidance. Call it exactly once.
 			let summaryDetails: unknown;
 			let summaryUsage: Usage | undefined;
 			if (options.summarize && entriesToSummarize.length > 0 && !extensionSummary) {
-				const model = this.model!;
-				const { apiKey, headers, env } = await this._getSummarizationRequestAuth(model);
+				let summarizationModel = this.model!;
+				const bgModelRef = this.settingsManager.getBackgroundAgentDefaultModel();
+				if (bgModelRef) {
+					const [providerId, ...rest] = bgModelRef.split("/");
+					const modelId = rest.join("/");
+					const bgModel = this._modelRuntime.getModel(providerId, modelId);
+					if (bgModel) summarizationModel = bgModel;
+				}
+				const { apiKey, headers, env } = await this._getSummarizationRequestAuth(summarizationModel);
 				const branchSummarySettings = this.settingsManager.getBranchSummarySettings();
 				const result = await generateBranchSummary(entriesToSummarize, {
-					model,
+					model: summarizationModel,
 					apiKey,
 					headers,
 					env,

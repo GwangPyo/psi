@@ -153,6 +153,10 @@ export const HUGGINGFACE_MODELS = values as {
 		id: "moonshotai/Kimi-K2.7-Code";
 		provider: "huggingface";
 	};
+	"moonshotai/Kimi-K3": Model<"openai-completions"> & {
+		id: "moonshotai/Kimi-K3";
+		provider: "huggingface";
+	};
 	"openai/gpt-oss-120b": Model<"openai-completions"> & {
 		id: "openai/gpt-oss-120b";
 		provider: "huggingface";

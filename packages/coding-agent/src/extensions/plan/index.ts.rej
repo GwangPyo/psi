@@ -1,0 +1,11 @@
+--- packages/coding-agent/src/extensions/plan/index.ts
++++ packages/coding-agent/src/extensions/plan/index.ts
+@@ -315,7 +315,7 @@
+ 	}
+ 
+ 	async function togglePlanMode(ctx: ExtensionContext): Promise<void> {
+-		if (planModeEnabled || executionMode) {
++		if (planModeEnabled || executionMode || machineDefinition) {
+ 			if (planModeEnabled && grillBeforePlanning && !grillCompleted) {
+ 				const choice = await ctx.ui.select("Plan mode is active but grill is pending.", ["Skip Grill & Unlock Plan", "Cancel Plan Mode", "Resume"]);
+ 				if (choice === "Skip Grill & Unlock Plan") {

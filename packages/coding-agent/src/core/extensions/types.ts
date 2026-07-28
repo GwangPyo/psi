@@ -1562,6 +1562,7 @@ export interface SpawnAgentOptions {
 	systemPrompt: string;
 	thinkingLevel?: ThinkingLevel;
 	toolNames?: string[];
+	initialMessages?: AgentMessage[];
 	onEvent?: (event: AgentEvent) => void | Promise<void>;
 	beforeToolCall?: (event: {
 		toolName: string;
