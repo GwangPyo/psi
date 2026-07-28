@@ -175,7 +175,7 @@ function sandboxInvocation(
 				"--chdir",
 				workingDirectory,
 				"/bin/sh",
-				"-lc",
+				"-c",
 				command,
 			],
 		};
@@ -183,7 +183,7 @@ function sandboxInvocation(
 	if (process.platform === "darwin") {
 		return {
 			command: "/usr/bin/sandbox-exec",
-			args: ["-p", macosProfile(scratchDirectory), "/bin/sh", "-lc", command],
+			args: ["-p", macosProfile(scratchDirectory), "/bin/sh", "-c", command],
 		};
 	}
 	throw new Error(`The test sandbox is not supported on ${process.platform}; refusing an unisolated test run.`);
@@ -267,6 +267,7 @@ export class IsolatedTestRunner {
 				TMP: scratchTmp,
 				TEMP: scratchTmp,
 				HOME: scratchHome,
+				PYTHONPATH: input.env?.PYTHONPATH ? `${workingDirectory}:${input.env.PYTHONPATH}` : workingDirectory,
 				XDG_CACHE_HOME: join(scratchDirectory, "cache"),
 				npm_config_cache: join(scratchDirectory, "npm-cache"),
 				CARGO_TARGET_DIR: join(scratchDirectory, "cargo-target"),
