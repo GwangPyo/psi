@@ -21,7 +21,12 @@ const readSchema = Type.Object({
 	path: Type.String({ description: "Path to the file to read (relative or absolute)" }),
 	offset: Type.Optional(Type.Number({ description: "Line number to start reading from (1-indexed)" })),
 	limit: Type.Optional(Type.Number({ description: "Maximum number of lines to read" })),
-	pattern: Type.Optional(Type.String({ description: "Optional regular expression to filter output lines. When used, matching lines are returned with their 1-indexed line numbers." })),
+	pattern: Type.Optional(
+		Type.String({
+			description:
+				"Optional regular expression to filter output lines. When used, matching lines are returned with their 1-indexed line numbers.",
+		}),
+	),
 });
 
 export type ReadToolInput = Static<typeof readSchema>;
@@ -212,7 +217,10 @@ export function createReadToolDefinition(
 		label: "read",
 		description: `Read the contents of a file. Supports text files and images (jpg, png, gif, webp, bmp). Images are sent as attachments. For text files, output is truncated to ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first). Use offset/limit for large files. When you need the full file, continue with offset until complete.`,
 		promptSnippet: "Read file contents",
-		promptGuidelines: ["Use read to examine files instead of cat or sed.", "Do not use sed to read files. Use this tool instead."],
+		promptGuidelines: [
+			"Use read to examine files instead of cat or sed.",
+			"Do not use sed to read files. Use this tool instead.",
+		],
 		parameters: readSchema,
 		async execute(
 			_toolCallId,
@@ -267,7 +275,6 @@ export function createReadToolDefinition(
 								const buffer = await ops.readFile(absolutePath);
 								const textContent = buffer.toString("utf-8");
 								const allLines = textContent.split("\n");
-								
 
 								let targetLines = allLines;
 								if (pattern) {
@@ -279,8 +286,8 @@ export function createReadToolDefinition(
 									}
 									targetLines = allLines
 										.map((line, index) => ({ line, num: index + 1 }))
-										.filter(item => regex.test(item.line))
-										.map(item => `${item.num}:${item.line}`);
+										.filter((item) => regex.test(item.line))
+										.map((item) => `${item.num}:${item.line}`);
 								}
 
 								// Apply offset if specified. Convert from 1-indexed input to 0-indexed array access.
@@ -288,7 +295,9 @@ export function createReadToolDefinition(
 								const startLineDisplay = startLine + 1;
 								// Check if offset is out of bounds.
 								if (startLine >= targetLines.length && targetLines.length > 0) {
-									throw new Error(`Offset ${offset} is beyond end of ${pattern ? "matches" : "file"} (${targetLines.length} lines total)`);
+									throw new Error(
+										`Offset ${offset} is beyond end of ${pattern ? "matches" : "file"} (${targetLines.length} lines total)`,
+									);
 								}
 								let selectedContent: string;
 								let userLimitedLines: number | undefined;
@@ -319,7 +328,10 @@ export function createReadToolDefinition(
 										outputText += `\n\n[Showing lines ${startLineDisplay}-${endLineDisplay} of ${targetLines.length} (${formatSize(DEFAULT_MAX_BYTES)} limit). Use offset=${nextOffset} to continue.]`;
 									}
 									details = { truncation };
-								} else if (userLimitedLines !== undefined && startLine + userLimitedLines < targetLines.length) {
+								} else if (
+									userLimitedLines !== undefined &&
+									startLine + userLimitedLines < targetLines.length
+								) {
 									// User-specified limit stopped early, but the file still has more content.
 									const remaining = targetLines.length - (startLine + userLimitedLines);
 									const nextOffset = startLine + userLimitedLines + 1;

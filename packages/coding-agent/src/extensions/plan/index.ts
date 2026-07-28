@@ -162,37 +162,40 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		}
 	}
 
-async function runBackgroundSummary(ctx: ExtensionContext) {
+	async function runBackgroundSummary(ctx: ExtensionContext) {
 		if (isBackgroundSummarizing || !backgroundAgent) return;
 		isBackgroundSummarizing = true;
 
 		try {
 			ctx.ui.notify("Background agent is grepping and summarizing context...", "info");
-			const previousSummary = backgroundSummaries.length > 0 ? backgroundSummaries[backgroundSummaries.length - 1] : "";
-			
+			const previousSummary =
+				backgroundSummaries.length > 0 ? backgroundSummaries[backgroundSummaries.length - 1] : "";
+
 			const prompt =
 				previousSummary === ""
 					? "Please investigate the codebase using tools and provide a summary of the current structure. CRITICAL: Your final response MUST be a SINGLE plain-text summary under 200 characters. Do NOT use markdown."
 					: `10 more turns have passed. Please investigate any newly relevant codebase structures and RE-SUMMARIZE the codebase state into a SINGLE updated summary.\n\nPrevious summary:\n${previousSummary}\n\nCRITICAL: You must completely rewrite and replace the old summary. Provide ONLY the new plain-text summary under 200 characters. Do NOT use markdown.`;
-			
+
 			let summary = await backgroundAgent.prompt(prompt);
-			
-			const stripFormatting = (text: string) => text
-				.replace(/```[\s\S]*?```/g, "")
-				.replace(/(\*\*|__)(.*?)\1/g, "$2")
-				.replace(/(\*|_)(.*?)\1/g, "$2")
-				.replace(/`(.*?)`/g, "$1")
-				.replace(/\[(.*?)\]\(.*?\)/g, "$1")
-				.replace(/#+\s+(.*)/g, "$1")
-				.replace(/>\s+(.*)/g, "$1")
-				.replace(/^[-*+]\s+/gm, "")
-				.replace(/\n+/g, " ")
-				.trim();
+
+			const stripFormatting = (text: string) =>
+				text
+					.replace(/```[\s\S]*?```/g, "")
+					.replace(/(\*\*|__)(.*?)\1/g, "$2")
+					.replace(/(\*|_)(.*?)\1/g, "$2")
+					.replace(/`(.*?)`/g, "$1")
+					.replace(/\[(.*?)\]\(.*?\)/g, "$1")
+					.replace(/#+\s+(.*)/g, "$1")
+					.replace(/>\s+(.*)/g, "$1")
+					.replace(/^[-*+]\s+/gm, "")
+					.replace(/\n+/g, " ")
+					.trim();
 
 			summary = stripFormatting(summary);
 
 			if (summary.length > 250) {
-				const retryPrompt = "Your previous summary was too long. Please RE-SUMMARIZE it to be strictly under 200 characters, using ONLY plain text without markdown.";
+				const retryPrompt =
+					"Your previous summary was too long. Please RE-SUMMARIZE it to be strictly under 200 characters, using ONLY plain text without markdown.";
 				summary = stripFormatting(await backgroundAgent.prompt(retryPrompt));
 			}
 
@@ -205,12 +208,15 @@ async function runBackgroundSummary(ctx: ExtensionContext) {
 					summary = (lastSpace > 0 ? summary.substring(0, lastSpace) : summary.substring(0, 197)) + "...";
 				}
 			}
-			
+
 			backgroundSummaries = [summary];
-			
+
 			ctx.ui.notify("Background summary updated.", "info");
 			if (planLayoutWidget) {
-				const leftText = machineDefinition && runtimeSnapshot ? formatPlanWidget(machineDefinition, runtimeSnapshot).join("\n") : "";
+				const leftText =
+					machineDefinition && runtimeSnapshot
+						? formatPlanWidget(machineDefinition, runtimeSnapshot).join("\n")
+						: "";
 				planLayoutWidget.update(leftText, formatPlanProgressText());
 			}
 		} catch (error) {
@@ -252,7 +258,7 @@ async function runBackgroundSummary(ctx: ExtensionContext) {
 			lines.push("▶ Waiting for agent progress...");
 		}
 
-		let resultLines: string[] = [];
+		const resultLines: string[] = [];
 		if (lines.length > 10) {
 			resultLines.push("... (earlier progress truncated)");
 			resultLines.push(...lines.slice(-9));
@@ -710,12 +716,12 @@ async function runBackgroundSummary(ctx: ExtensionContext) {
 		},
 	});
 
-pi.registerTool({
+	pi.registerTool({
 		name: "write_report",
 		label: "Write Report",
 		description: "Write the content to the scout report file (.pi/scout-report.md).",
 		parameters: Type.Object({
-			content: Type.String({ description: "Content to write" })
+			content: Type.String({ description: "Content to write" }),
 		}),
 		async execute(_id, params, _sig, _onUpdate, ctx) {
 			const { writeFile } = await import("node:fs/promises");
@@ -728,7 +734,7 @@ pi.registerTool({
 			}
 			await writeFile(fullPath, params.content, "utf-8");
 			return { content: [{ type: "text", text: `Successfully wrote report.` }], details: null };
-		}
+		},
 	});
 
 	pi.registerTool({
@@ -736,10 +742,13 @@ pi.registerTool({
 		label: "Edit Report",
 		description: "Edit the existing scout report file (.pi/scout-report.md) using exact text replacement.",
 		parameters: Type.Object({
-			edits: Type.Array(Type.Object({
-				oldText: Type.String({ description: "Exact text to replace" }),
-				newText: Type.String({ description: "Replacement text" })
-			}), { description: "Array of replacements" })
+			edits: Type.Array(
+				Type.Object({
+					oldText: Type.String({ description: "Exact text to replace" }),
+					newText: Type.String({ description: "Replacement text" }),
+				}),
+				{ description: "Array of replacements" },
+			),
 		}),
 		async execute(_id, params, _sig, _onUpdate, ctx) {
 			const { readFile, writeFile } = await import("node:fs/promises");
@@ -754,7 +763,7 @@ pi.registerTool({
 			}
 			await writeFile(fullPath, content, "utf-8");
 			return { content: [{ type: "text", text: `Successfully edited report.` }], details: null };
-		}
+		},
 	});
 
 	pi.registerTool({
@@ -764,7 +773,7 @@ pi.registerTool({
 		parameters: Type.Object({}),
 		async execute() {
 			throw new Error("SCOUT_FINISHED_REPORT");
-		}
+		},
 	});
 
 	pi.registerTool({
