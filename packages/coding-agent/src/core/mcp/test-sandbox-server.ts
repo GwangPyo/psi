@@ -261,6 +261,9 @@ export class IsolatedTestRunner {
 			const environment: NodeJS.ProcessEnv = {
 				...process.env,
 				...input.env,
+				PWD: workingDirectory,
+				CWD: workingDirectory,
+				INIT_CWD: workingDirectory,
 				PI_TEST_PROJECT_ROOT: this.projectRoot,
 				PI_TEST_SCRATCH: scratchDirectory,
 				TMPDIR: scratchTmp,

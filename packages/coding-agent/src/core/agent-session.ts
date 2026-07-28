@@ -1,3 +1,4 @@
+import { BackgroundEmotionDaemon } from "./background-emotion-daemon.ts";
 /**
  * AgentSession - Core abstraction for agent lifecycle and session management.
  *
@@ -310,8 +311,10 @@ export class AgentSession {
 	readonly agent: Agent;
 	readonly sessionManager: SessionManager;
 	readonly settingsManager: SettingsManager;
+	public backgroundEmotionDaemon: BackgroundEmotionDaemon;
 
 	private _scopedModels: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel }>;
+	private _spawnedAgents = new Set<{ agent: Agent; running: boolean }>();
 
 	// Event subscription state
 	private _unsubscribeAgent?: () => void;
@@ -385,9 +388,11 @@ export class AgentSession {
 		this.settingsManager = config.settingsManager;
 		this._scopedModels = config.scopedModels ?? [];
 		this._resourceLoader = config.resourceLoader;
+		
 		this._customTools = config.customTools ?? [];
 		this._cwd = config.cwd;
 		this._modelRuntime = config.modelRuntime;
+		this.backgroundEmotionDaemon = new BackgroundEmotionDaemon(this, this.settingsManager, this._modelRuntime);
 		this._extensionRunnerRef = config.extensionRunnerRef;
 		this._initialActiveToolNames = config.initialActiveToolNames;
 		this._allowedToolNames = config.allowedToolNames ? new Set(config.allowedToolNames) : undefined;
@@ -445,7 +450,7 @@ export class AgentSession {
 		throw new Error(formatNoApiKeyFoundMessage(model.provider));
 	}
 
-	private async _getSummarizationRequestAuth(model: Model<any>): Promise<{
+	public async getSummarizationRequestAuth(model: Model<any>): Promise<{
 		apiKey?: string;
 		headers?: Record<string, string>;
 		env?: Record<string, string>;
@@ -864,6 +869,10 @@ export class AgentSession {
 	// Read-only State Access
 	// =========================================================================
 
+	get backgroundRunningContext(): string {
+		return this.backgroundEmotionDaemon.backgroundRunningContext;
+	}
+
 	/** Full agent state */
 	get state(): AgentState {
 		return this.agent.state;
@@ -966,12 +975,19 @@ export class AgentSession {
 				});
 		}
 		const unsubscribe = options.onEvent ? agent.subscribe(options.onEvent) : undefined;
+		const spawnedRecord = { agent, running: false };
+		this._spawnedAgents.add(spawnedRecord);
 		let disposed = false;
 
 		return {
 			async prompt(message) {
 				if (disposed) throw new Error("Spawned agent has been disposed");
-				await agent.prompt(message);
+				spawnedRecord.running = true;
+				try {
+					await agent.prompt(message);
+				} finally {
+					spawnedRecord.running = false;
+				}
 				const assistant = [...agent.state.messages].reverse().find((entry) => entry.role === "assistant");
 				const text = assistant ? contentText(assistant.content, "\n").trim() : "";
 				if (!text) {
@@ -995,9 +1011,10 @@ export class AgentSession {
 					},
 				];
 			},
-			dispose() {
+			dispose: () => {
 				if (disposed) return;
 				disposed = true;
+				this._spawnedAgents.delete(spawnedRecord);
 				agent.abort();
 				unsubscribe?.();
 				agent.reset();
@@ -1321,6 +1338,35 @@ Inspect only that tool's definition, schema, and guidance. Call it exactly once.
 	}
 
 	/**
+	 * Send a message to currently active agents (spawned subagents or main agent)
+	 */
+	async broadcast(msg: string): Promise<boolean> {
+		let delivered = false;
+		for (const { agent, running } of this._spawnedAgents) {
+			if (running) {
+				agent.abort();
+				// Let the abort propagate and agent to become idle, then resume
+				setTimeout(async () => {
+					await agent.waitForIdle();
+					agent.state.messages = [
+						...agent.state.messages,
+						{ role: "user", content: [{ type: "text", text: msg }], timestamp: Date.now() },
+					];
+					void agent.prompt("");
+				}, 0);
+				delivered = true;
+			}
+		}
+
+		if (!this.isIdle) {
+			void this.steer(msg);
+			delivered = true;
+		}
+
+		return delivered;
+	}
+
+	/**
 	 * Send a prompt to the agent.
 	 * - Handles extension commands (registered via pi.registerCommand) immediately, even during streaming
 	 * - Expands file-based prompt templates by default
@@ -1438,6 +1484,8 @@ Inspect only that tool's definition, schema, and guidance. Call it exactly once.
 				messages.push(msg);
 			}
 			this._pendingNextTurnMessages = [];
+
+			this._emit({ type: "user_message_added", text: expandedText } as any);
 
 			messages = await this._prepareAgentStart(expandedText, currentImages, messages);
 		} catch (error) {
@@ -1608,6 +1656,12 @@ Inspect only that tool's definition, schema, and guidance. Call it exactly once.
 		}
 	}
 
+	public injectMessageImmediate(appMessage: AgentMessage): void {
+		this.agent.state.messages.push(appMessage);
+		this._emit({ type: "message_start", message: appMessage });
+		this._emit({ type: "message_end", message: appMessage });
+	}
+
 	/**
 	 * Send a custom message to the session. Creates a CustomMessageEntry.
 	 *
@@ -1622,7 +1676,7 @@ Inspect only that tool's definition, schema, and guidance. Call it exactly once.
 	 */
 	async sendCustomMessage<T = unknown>(
 		message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details">,
-		options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" },
+		options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" | "immediate" },
 	): Promise<void> {
 		const appMessage = {
 			role: "custom" as const,
@@ -1635,13 +1689,16 @@ Inspect only that tool's definition, schema, and guidance. Call it exactly once.
 		} satisfies CustomMessage<T>;
 		if (options?.deliverAs === "nextTurn") {
 			this._pendingNextTurnMessages.push(appMessage);
-		} else if (this.isStreaming) {
+			this._emitQueueUpdate();
+		} else if (this.isStreaming && options?.deliverAs !== "immediate") {
 			if (options?.deliverAs === "followUp") {
-				this.agent.followUp(appMessage);
+				const prompt = contentText(appMessage.content, " ");
+				await this._queueFollowUp(prompt);
 			} else {
-				this.agent.steer(appMessage);
+				const prompt = contentText(appMessage.content, " ");
+				await this._queueSteer(prompt);
 			}
-		} else if (options?.triggerTurn) {
+		} else if (options?.triggerTurn && !this.isStreaming) {
 			const prompt = contentText(appMessage.content, "");
 			const messages = await this._prepareAgentStart(prompt, undefined, [appMessage]);
 			await this._runAgentPrompt(messages);
@@ -1987,7 +2044,7 @@ Inspect only that tool's definition, schema, and guidance. Call it exactly once.
 				throw new Error(formatNoModelSelectedMessage());
 			}
 
-			const { apiKey, headers, env } = await this._getSummarizationRequestAuth(this.model);
+			const { apiKey, headers, env } = await this.getSummarizationRequestAuth(this.model);
 
 			const pathEntries = this.sessionManager.getBranch();
 			const settings = this.settingsManager.getCompactionSettings();
@@ -2013,7 +2070,7 @@ Inspect only that tool's definition, schema, and guidance. Call it exactly once.
 				const bgModel = this._modelRuntime.getModel(providerId, modelId);
 				if (bgModel) compactionModel = bgModel;
 			}
-			const authResult = await this._getSummarizationRequestAuth(compactionModel);
+			const authResult = await this.getSummarizationRequestAuth(compactionModel);
 			const compactApiKey = authResult.apiKey;
 			const compactHeaders = authResult.headers;
 			const compactEnv = authResult.env;
@@ -2284,7 +2341,7 @@ Inspect only that tool's definition, schema, and guidance. Call it exactly once.
 				headers = withoutDeletedHeaders(authResult.auth.headers);
 				env = authResult.env;
 			} else {
-				({ apiKey, headers, env } = await this._getSummarizationRequestAuth(compactionModel));
+				({ apiKey, headers, env } = await this.getSummarizationRequestAuth(compactionModel));
 			}
 
 			const pathEntries = this.sessionManager.getBranch();
@@ -3207,7 +3264,7 @@ Inspect only that tool's definition, schema, and guidance. Call it exactly once.
 					const bgModel = this._modelRuntime.getModel(providerId, modelId);
 					if (bgModel) summarizationModel = bgModel;
 				}
-				const { apiKey, headers, env } = await this._getSummarizationRequestAuth(summarizationModel);
+				const { apiKey, headers, env } = await this.getSummarizationRequestAuth(summarizationModel);
 				const branchSummarySettings = this.settingsManager.getBranchSummarySettings();
 				const result = await generateBranchSummary(entriesToSummarize, {
 					model: summarizationModel,

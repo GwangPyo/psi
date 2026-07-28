@@ -1,8 +1,8 @@
-import { type Component } from "@earendil-works/pi-tui";
-import { theme } from "../theme/theme.ts";
-import type { AgentSession } from "../../../core/agent-session.ts";
-import { formatTokens } from "./footer.ts";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import type { Component } from "@earendil-works/pi-tui";
+import type { AgentSession } from "../../../core/agent-session.ts";
+import { theme } from "../theme/theme.ts";
+import { formatTokens } from "./footer.ts";
 
 export class ContextUsageMessageComponent implements Component {
 	private lines: string[] = [];
@@ -36,12 +36,12 @@ export class ContextUsageMessageComponent implements Component {
 
 		const modelName = this.session.model?.name || this.session.model?.id || "Unknown Model";
 		const maxTokens = this.session.model?.contextWindow || 1048576; // fallback 1M
-		
+
 		let userTokens = 0;
 		let assistantTokens = 0;
 		let toolCallTokens = 0;
 		let systemPromptTokens = 0;
-		
+
 		for (const msg of this.llmMessages as any[]) {
 			let textLength = 0;
 			if (typeof msg.content === "string") {
@@ -74,17 +74,24 @@ export class ContextUsageMessageComponent implements Component {
 				systemToolsTokens = Math.ceil(JSON.stringify(tools).length / 4);
 			}
 		}
-		
+
 		const skillsTokens = 0; // Handled by llmMessages system prompt dynamically in production
 		const subagentsTokens = 0; // Handled by llmMessages system prompt dynamically in production
-		
-		const checkpointBufferTokens = 7600; 
 
-		const totalUsed = userTokens + assistantTokens + toolCallTokens + systemPromptTokens + systemToolsTokens + skillsTokens + subagentsTokens;
+		const checkpointBufferTokens = 7600;
+
+		const totalUsed =
+			userTokens +
+			assistantTokens +
+			toolCallTokens +
+			systemPromptTokens +
+			systemToolsTokens +
+			skillsTokens +
+			subagentsTokens;
 		const freeSpace = Math.max(0, maxTokens - totalUsed);
-		
+
 		const pct = (val: number) => ((val / maxTokens) * 100).toFixed(1) + "%";
-		
+
 		const blockUser = theme.fg("accent", "●");
 		const blockAssistant = theme.fg("success", "◉");
 		const blockTool = theme.fg("warning", "⚙");
@@ -94,7 +101,7 @@ export class ContextUsageMessageComponent implements Component {
 
 		const totalBlocks = 250;
 		const tokensPerBlock = maxTokens / totalBlocks;
-		
+
 		const blocks: string[] = [];
 		const addBlocks = (tokens: number, char: string) => {
 			const count = Math.round(tokens / tokensPerBlock);
@@ -102,16 +109,16 @@ export class ContextUsageMessageComponent implements Component {
 				blocks.push(char);
 			}
 		};
-		
+
 		addBlocks(userTokens, blockUser);
 		addBlocks(assistantTokens, blockAssistant);
 		addBlocks(toolCallTokens, blockTool);
 		addBlocks(systemPromptTokens + systemToolsTokens + skillsTokens + subagentsTokens, blockSystem);
-		
+
 		while (blocks.length < totalBlocks) {
 			blocks.push(blockFree);
 		}
-		
+
 		const checkpointBlocks = Math.round(checkpointBufferTokens / tokensPerBlock);
 		for (let i = 0; i < checkpointBlocks && totalBlocks - 1 - i >= 0; i++) {
 			blocks[totalBlocks - 1 - i] = blockCheckpoint;
@@ -124,7 +131,7 @@ export class ContextUsageMessageComponent implements Component {
 		}
 
 		this.lines.push(`└ ${theme.bold("Context Usage")}`);
-		
+
 		const statsLines = [
 			`${modelName} · ${formatTokens(totalUsed)}/${formatTokens(maxTokens)} tokens (${pct(totalUsed)})`,
 			theme.bold("Token usage by category"),
@@ -136,7 +143,7 @@ export class ContextUsageMessageComponent implements Component {
 			`${blockSystem} Skills: ${formatTokens(skillsTokens)} tokens (${pct(skillsTokens)})`,
 			`${blockSystem} Subagents: ${formatTokens(subagentsTokens)} tokens (${pct(subagentsTokens)})`,
 			`${blockFree} Free space: ${formatTokens(freeSpace)} (${pct(freeSpace)})`,
-			`${blockCheckpoint} Checkpoint buffer: ${formatTokens(checkpointBufferTokens)} tokens (not counted in usage)`
+			`${blockCheckpoint} Checkpoint buffer: ${formatTokens(checkpointBufferTokens)} tokens (not counted in usage)`,
 		];
 
 		const maxGridWidth = 49;
@@ -145,7 +152,7 @@ export class ContextUsageMessageComponent implements Component {
 			const right = statsLines[i] || "";
 			this.lines.push(`  ${left}   ${right}`);
 		}
-		
+
 		this.lines.push("");
 		this.lines.push(`Checkpoints (9) · /rewind`);
 		this.lines.push(`└ Checkpoint 9 (active, in context): steps 626-725`);

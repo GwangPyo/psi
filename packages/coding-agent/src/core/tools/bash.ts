@@ -156,7 +156,16 @@ export interface BashSpawnContext {
 export type BashSpawnHook = (context: BashSpawnContext) => BashSpawnContext;
 
 function resolveSpawnContext(command: string, cwd: string, spawnHook?: BashSpawnHook): BashSpawnContext {
-	const baseContext: BashSpawnContext = { command, cwd, env: { ...getShellEnv() } };
+	const baseContext: BashSpawnContext = {
+		command,
+		cwd,
+		env: {
+			...getShellEnv(),
+			PWD: cwd,
+			CWD: cwd,
+			INIT_CWD: cwd,
+		},
+	};
 	return spawnHook ? spawnHook(baseContext) : baseContext;
 }
 
@@ -308,6 +317,19 @@ export function createBashToolDefinition(
 			onUpdate?,
 			_ctx?,
 		) {
+			const tokens = command.split(/[\s|&;()<>\n]+/);
+			const blocked = ["sed", "vim", "vi", "nano", "emacs"];
+			if (tokens.some((t) => blocked.includes(t) || t.match(/\/(sed|vim|vi|nano|emacs)$/))) {
+				throw new Error(
+					"Error: The use of sed or interactive editors (vim, nano, etc.) via bash is strictly prohibited. You MUST use the 'edit' or 'write' tool for all code changes. If you want to read or filter a file, use the 'read' tool with the 'pattern' parameter.",
+				);
+			}
+			if (/>\s*[^/&]/.test(command)) {
+				throw new Error(
+					"Error: Output redirection (>) to files via bash is disabled to prevent accidental modifications. You MUST use the 'edit' or 'write' tool for all code changes.",
+				);
+			}
+
 			const resolvedCommand = commandPrefix ? `${commandPrefix}\n${command}` : command;
 			const spawnContext = resolveSpawnContext(resolvedCommand, cwd, spawnHook);
 			const output = new OutputAccumulator({ tempFilePrefix: "pi-bash" });

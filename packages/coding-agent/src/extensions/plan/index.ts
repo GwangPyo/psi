@@ -5,12 +5,13 @@
  * persisted machine through explicit, structured transition tool calls.
  */
 
-import { Key, Text, HBox, type Component } from "@earendil-works/pi-tui";
+import { type Component, HBox, Key, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { getAgentDir } from "../../config.ts";
-import { SettingsManager } from "../../core/settings-manager.ts";
 import type { ExtensionAPI, ExtensionContext } from "../../core/extensions/types.ts";
+import { SettingsManager } from "../../core/settings-manager.ts";
 import { type AnimatedStatus, startAnimatedStatus } from "../animated-status.ts";
+import { swManager } from "../structured-writing/index.ts";
 import {
 	formatActiveStateInstructions,
 	formatEnabledTransitions,
@@ -33,7 +34,6 @@ import {
 import { buildExecutionSystemPrompt, buildPlanSystemPrompt } from "./prompt.ts";
 import { PlanGraphComponent } from "./tui-graph.ts";
 import { isSafeCommand } from "./utils.ts";
-import { swManager } from "../structured-writing/index.ts";
 
 const GUIDE_PLAN_TOOL = "guide_plan";
 const PLAN_GRILL_TOOL = "plan_grill";
@@ -42,7 +42,16 @@ const PLAN_DRAFTING_WIDGET = "plan-drafting";
 const SCOUT_TOOL = "scout";
 const PLAN_MODE_TOOLS = [SCOUT_TOOL, PLAN_GRILL_TOOL, GUIDE_PLAN_TOOL];
 const NORMAL_MODE_TOOLS = ["read", "bash", "edit", "write", "grep", "find", "ls"];
-const PLAN_MODE_DISABLED_TOOLS = new Set<string>(["edit", "write", "read", "bash", "grep", "find", "ls", TRANSITION_PLAN_TOOL]);
+const PLAN_MODE_DISABLED_TOOLS = new Set<string>([
+	"edit",
+	"write",
+	"read",
+	"bash",
+	"grep",
+	"find",
+	"ls",
+	TRANSITION_PLAN_TOOL,
+]);
 const PLAN_CONTROL_TOOLS = new Set<string>([PLAN_GRILL_TOOL, GUIDE_PLAN_TOOL, TRANSITION_PLAN_TOOL]);
 const PLAN_MANAGED_TOOLS = new Set<string>([...PLAN_MODE_TOOLS, ...NORMAL_MODE_TOOLS, ...PLAN_CONTROL_TOOLS]);
 
@@ -121,6 +130,96 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 	let executionRunTransitionCount: number | undefined;
 	let noProgressRuns = 0;
 
+	let planMessageCountAtStart = 0;
+	let lastSummaryMessageCount = 0;
+	let backgroundSummaries: string[] = [];
+	let backgroundAgent: ReturnType<typeof pi.spawnAgent> | undefined;
+	let isBackgroundSummarizing = false;
+
+	function initBackgroundAgent(ctx: ExtensionContext) {
+		if (backgroundAgent) return;
+		const bgModelRef = SettingsManager.create(ctx.cwd, getAgentDir(), {
+			projectTrusted: ctx.isProjectTrusted ? ctx.isProjectTrusted() : true,
+		}).getBackgroundAgentDefaultModel();
+		let bgModel = ctx.model;
+		if (bgModelRef) {
+			const [provider, id] = bgModelRef.split("/");
+			bgModel = ctx.modelRegistry.find(provider, id) ?? ctx.model;
+		}
+		if (!bgModel) return;
+
+		backgroundAgent = pi.spawnAgent({
+			model: bgModel,
+			systemPrompt: `${ctx.getSystemPrompt()}\n\nYou are a background agent in Plan Mode. Your task is to use grep and read tools to investigate the codebase alongside the Main Agent's progress and provide brief, incremental summaries of structural findings. Maintain your context between requests. Do NOT propose plans. Just summarize the current codebase state.`,
+			toolNames: ["bash", "grep", "read", "find", "ls"],
+		});
+	}
+
+	function disposeBackgroundAgent() {
+		if (backgroundAgent) {
+			backgroundAgent.dispose();
+			backgroundAgent = undefined;
+		}
+	}
+
+async function runBackgroundSummary(ctx: ExtensionContext) {
+		if (isBackgroundSummarizing || !backgroundAgent) return;
+		isBackgroundSummarizing = true;
+
+		try {
+			ctx.ui.notify("Background agent is grepping and summarizing context...", "info");
+			const previousSummary = backgroundSummaries.length > 0 ? backgroundSummaries[backgroundSummaries.length - 1] : "";
+			
+			const prompt =
+				previousSummary === ""
+					? "Please investigate the codebase using tools and provide a summary of the current structure. CRITICAL: Your final response MUST be a SINGLE plain-text summary under 200 characters. Do NOT use markdown."
+					: `10 more turns have passed. Please investigate any newly relevant codebase structures and RE-SUMMARIZE the codebase state into a SINGLE updated summary.\n\nPrevious summary:\n${previousSummary}\n\nCRITICAL: You must completely rewrite and replace the old summary. Provide ONLY the new plain-text summary under 200 characters. Do NOT use markdown.`;
+			
+			let summary = await backgroundAgent.prompt(prompt);
+			
+			const stripFormatting = (text: string) => text
+				.replace(/```[\s\S]*?```/g, "")
+				.replace(/(\*\*|__)(.*?)\1/g, "$2")
+				.replace(/(\*|_)(.*?)\1/g, "$2")
+				.replace(/`(.*?)`/g, "$1")
+				.replace(/\[(.*?)\]\(.*?\)/g, "$1")
+				.replace(/#+\s+(.*)/g, "$1")
+				.replace(/>\s+(.*)/g, "$1")
+				.replace(/^[-*+]\s+/gm, "")
+				.replace(/\n+/g, " ")
+				.trim();
+
+			summary = stripFormatting(summary);
+
+			if (summary.length > 250) {
+				const retryPrompt = "Your previous summary was too long. Please RE-SUMMARIZE it to be strictly under 200 characters, using ONLY plain text without markdown.";
+				summary = stripFormatting(await backgroundAgent.prompt(retryPrompt));
+			}
+
+			if (summary.length > 200) {
+				const match = summary.substring(0, 197).match(/.*[.?!]/);
+				if (match) {
+					summary = match[0];
+				} else {
+					const lastSpace = summary.lastIndexOf(" ", 197);
+					summary = (lastSpace > 0 ? summary.substring(0, lastSpace) : summary.substring(0, 197)) + "...";
+				}
+			}
+			
+			backgroundSummaries = [summary];
+			
+			ctx.ui.notify("Background summary updated.", "info");
+			if (planLayoutWidget) {
+				const leftText = machineDefinition && runtimeSnapshot ? formatPlanWidget(machineDefinition, runtimeSnapshot).join("\n") : "";
+				planLayoutWidget.update(leftText, formatPlanProgressText());
+			}
+		} catch (error) {
+			ctx.ui.notify(`Background summarization failed: ${error}`, "error");
+		} finally {
+			isBackgroundSummarizing = false;
+		}
+	}
+
 	function stopDraftingStatus(): void {
 		draftingStatus?.stop();
 		draftingStatus = undefined;
@@ -135,7 +234,9 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 				}
 			}
 			if (planGuideDraft.pendingReview) {
-				lines.push(`▶ [${planGuideDraft.pendingReview.dimension} review] ${planGuideDraft.pendingReview.assessment}`);
+				lines.push(
+					`▶ [${planGuideDraft.pendingReview.dimension} review] ${planGuideDraft.pendingReview.assessment}`,
+				);
 			}
 		} else if (runtimeSnapshot) {
 			for (const record of runtimeSnapshot.history) {
@@ -146,15 +247,27 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 				lines.push(`▶ Blocked: ${runtimeSnapshot.blockReason}`);
 			}
 		}
-		
+
 		if (lines.length === 0) {
 			lines.push("▶ Waiting for agent progress...");
 		}
-		
+
+		let resultLines: string[] = [];
 		if (lines.length > 10) {
-			return "... (earlier progress truncated)\n" + lines.slice(-9).join("\n");
+			resultLines.push("... (earlier progress truncated)");
+			resultLines.push(...lines.slice(-9));
+		} else {
+			resultLines.push(...lines);
 		}
-		return lines.join("\n");
+
+		if (backgroundSummaries && backgroundSummaries.length > 0) {
+			resultLines.push("");
+			resultLines.push("--- Latest Codebase Summary ---");
+			const latestSummary = backgroundSummaries[backgroundSummaries.length - 1];
+			resultLines.push(...latestSummary.split("\n"));
+		}
+
+		return resultLines.join("\n");
 	}
 
 	class PlanLayoutWidget implements Component {
@@ -200,11 +313,18 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 			).length;
 			const total = machineDefinition.states.filter((state) => state.kind !== "final").length;
 			ctx.ui.setStatus("plan-mode", ctx.ui.theme.fg("accent", `plan ${completed}/${total}`));
-			ctx.ui.setWidget("plan-layout", (_tui, _thm) => {
-				const widget = getPlanLayoutWidget();
-				widget.update(formatPlanWidget(machineDefinition!, runtimeSnapshot!).join("\n"), formatPlanProgressText());
-				return widget;
-			}, { placement: "aboveEditor" });
+			ctx.ui.setWidget(
+				"plan-layout",
+				(_tui, _thm) => {
+					const widget = getPlanLayoutWidget();
+					widget.update(
+						formatPlanWidget(machineDefinition!, runtimeSnapshot!).join("\n"),
+						formatPlanProgressText(),
+					);
+					return widget;
+				},
+				{ placement: "aboveEditor" },
+			);
 			ctx.ui.setWidget(PLAN_DRAFTING_WIDGET, undefined);
 			ctx.ui.setWidget("plan-todos", undefined);
 			return;
@@ -220,11 +340,15 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 					draftingStatus = startAnimatedStatus({
 						label,
 						setStatus: (text) => {
-							ctx.ui.setWidget("plan-layout", (_tui, _thm) => {
-								const widget = getPlanLayoutWidget();
-								widget.update(text || "", formatPlanProgressText());
-								return widget;
-							}, { placement: "aboveEditor" });
+							ctx.ui.setWidget(
+								"plan-layout",
+								(_tui, _thm) => {
+									const widget = getPlanLayoutWidget();
+									widget.update(text || "", formatPlanProgressText());
+									return widget;
+								},
+								{ placement: "aboveEditor" },
+							);
 						},
 						render: (frame, text) => `${ctx.ui.theme.fg("accent", frame)} ${ctx.ui.theme.fg("warning", text)}`,
 					});
@@ -236,12 +360,19 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 
 			stopDraftingStatus();
 			ctx.ui.setStatus("plan-mode", ctx.ui.theme.fg("warning", machineDefinition ? "plan ready" : "plan drafting"));
-			ctx.ui.setWidget("plan-layout", (_tui, _thm) => {
-				const leftText = machineDefinition && runtimeSnapshot ? formatPlanWidget(machineDefinition, runtimeSnapshot).join("\n") : "";
-				const widget = getPlanLayoutWidget();
-				widget.update(leftText, formatPlanProgressText());
-				return widget;
-			}, { placement: "aboveEditor" });
+			ctx.ui.setWidget(
+				"plan-layout",
+				(_tui, _thm) => {
+					const leftText =
+						machineDefinition && runtimeSnapshot
+							? formatPlanWidget(machineDefinition, runtimeSnapshot).join("\n")
+							: "";
+					const widget = getPlanLayoutWidget();
+					widget.update(leftText, formatPlanProgressText());
+					return widget;
+				},
+				{ placement: "aboveEditor" },
+			);
 			ctx.ui.setWidget("plan-todos", undefined);
 			ctx.ui.setWidget(PLAN_DRAFTING_WIDGET, undefined);
 			return;
@@ -313,6 +444,10 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		executionRunTransitionCount = undefined;
 		noProgressRuns = 0;
 		grillCompleted = !grillBeforePlanning;
+		planMessageCountAtStart = 0;
+		lastSummaryMessageCount = 0;
+		backgroundSummaries = [];
+		disposeBackgroundAgent();
 	}
 
 	async function togglePlanMode(ctx: ExtensionContext): Promise<void> {
@@ -331,6 +466,9 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 			swManager.enable();
 			executionMode = false;
 			clearPlan();
+			planMessageCountAtStart = ctx.sessionManager.buildSessionContext().messages.length;
+			initBackgroundAgent(ctx);
+			void runBackgroundSummary(ctx);
 			enablePlanModeTools();
 			ctx.ui.notify("Plan mode enabled. Build a topology guide before execution.");
 		}
@@ -410,7 +548,12 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 			}
 			if (!grillBeforePlanning || grillCompleted) {
 				return {
-					content: [{ type: "text", text: "The grill is already completed or was skipped. Please proceed with guide_plan." }],
+					content: [
+						{
+							type: "text",
+							text: "The grill is already completed or was skipped. Please proceed with guide_plan.",
+						},
+					],
 					details: { completed: true },
 				};
 			}
@@ -567,21 +710,81 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		},
 	});
 
+pi.registerTool({
+		name: "write_report",
+		label: "Write Report",
+		description: "Write the content to the scout report file (.pi/scout-report.md).",
+		parameters: Type.Object({
+			content: Type.String({ description: "Content to write" })
+		}),
+		async execute(_id, params, _sig, _onUpdate, ctx) {
+			const { writeFile } = await import("node:fs/promises");
+			const { dirname, resolve } = await import("node:path");
+			const { existsSync, mkdirSync } = await import("node:fs");
+			const fullPath = resolve(ctx.cwd, ".pi/scout-report.md");
+			const dir = dirname(fullPath);
+			if (!existsSync(dir)) {
+				mkdirSync(dir, { recursive: true });
+			}
+			await writeFile(fullPath, params.content, "utf-8");
+			return { content: [{ type: "text", text: `Successfully wrote report.` }], details: null };
+		}
+	});
+
+	pi.registerTool({
+		name: "edit_report",
+		label: "Edit Report",
+		description: "Edit the existing scout report file (.pi/scout-report.md) using exact text replacement.",
+		parameters: Type.Object({
+			edits: Type.Array(Type.Object({
+				oldText: Type.String({ description: "Exact text to replace" }),
+				newText: Type.String({ description: "Replacement text" })
+			}), { description: "Array of replacements" })
+		}),
+		async execute(_id, params, _sig, _onUpdate, ctx) {
+			const { readFile, writeFile } = await import("node:fs/promises");
+			const { resolve } = await import("node:path");
+			const fullPath = resolve(ctx.cwd, ".pi/scout-report.md");
+			let content = await readFile(fullPath, "utf-8");
+			for (const edit of params.edits) {
+				if (!content.includes(edit.oldText)) {
+					throw new Error(`oldText not found in file: ${edit.oldText}`);
+				}
+				content = content.replace(edit.oldText, edit.newText);
+			}
+			await writeFile(fullPath, content, "utf-8");
+			return { content: [{ type: "text", text: `Successfully edited report.` }], details: null };
+		}
+	});
+
+	pi.registerTool({
+		name: "finish_report",
+		label: "Finish Report",
+		description: "Mark the report as finished. Call this when you are completely done writing the report.",
+		parameters: Type.Object({}),
+		async execute() {
+			throw new Error("SCOUT_FINISHED_REPORT");
+		}
+	});
+
 	pi.registerTool({
 		name: SCOUT_TOOL,
 		label: "Scout Information",
-		description: "Use this tool to launch a lightweight background scout agent that will gather information from the codebase using read tools (bash, grep, find, ls, read).",
+		description:
+			"Use this tool to launch a lightweight background scout agent that will gather information from the codebase using read tools (bash, grep, find, ls, read).",
 		promptSnippet: "Use the scout tool to gather information instead of reading directly",
 		promptGuidelines: [
 			"Since you do not have read tools during planning, call the scout tool when you need information about the codebase.",
-			"Provide a clear research prompt to the scout, detailing exactly what you want it to look for."
+			"Provide a clear research prompt to the scout, detailing exactly what you want it to look for.",
 		],
 		parameters: Type.Object({
-			prompt: Type.String({ description: "Instructions for the scout agent on what to investigate." })
+			prompt: Type.String({ description: "Instructions for the scout agent on what to investigate." }),
 		}),
 		executionMode: "parallel",
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-			const scoutModelReference = SettingsManager.create(ctx.cwd, getAgentDir(), { projectTrusted: ctx.isProjectTrusted ? ctx.isProjectTrusted() : true }).getSubagentDefaultModel();
+			const scoutModelReference = SettingsManager.create(ctx.cwd, getAgentDir(), {
+				projectTrusted: ctx.isProjectTrusted ? ctx.isProjectTrusted() : true,
+			}).getSubagentDefaultModel();
 			let scoutModel = ctx.model;
 			if (scoutModelReference) {
 				const [provider, id] = scoutModelReference.split("/");
@@ -596,19 +799,29 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 			const contextString = JSON.stringify(recentContext, null, 2);
 			const scout = pi.spawnAgent({
 				model: scoutModel,
-				systemPrompt: `${ctx.getSystemPrompt()}\n\n[Main Agent Context (Last 20 Turns)]\n${contextString}\n\nYou are the Scout Agent. Your task is to investigate the codebase and gather all necessary information for the user's research prompt: ${params.prompt}\n\nYou must use read tools (bash, grep, find, ls, read).\n\nWhen you are done, output a comprehensive research report summarizing your findings. Do NOT attempt to write a plan yourself.`,
-				toolNames: ["read", "bash", "grep", "find", "ls"],
+				systemPrompt: `${ctx.getSystemPrompt()}\n\n[Main Agent Context (Last 20 Turns)]\n${contextString}\n\nYou are the Scout Agent. Your task is to investigate the codebase and gather all necessary information for the user's research prompt: ${params.prompt}\n\nYou must use read tools (bash, grep, find, ls, read) to investigate.\n\nYou MUST write your findings into a comprehensive research report using the 'write_report' and 'edit_report' tools. When you are completely done writing the report, you MUST call the 'finish_report' tool. This will automatically end your turn and deliver the report. Do NOT output the report text in your message.`,
+				toolNames: ["read", "bash", "grep", "find", "ls", "write_report", "edit_report", "finish_report"],
 			});
 			try {
-				const scoutReport = await scout.prompt(params.prompt);
+				try {
+					await scout.prompt(params.prompt);
+				} catch (e: any) {
+					if (e.message !== "SCOUT_FINISHED_REPORT") throw e;
+				}
+				let reportContent = "Report file not found.";
+				try {
+					const { readFile } = await import("node:fs/promises");
+					const { resolve } = await import("node:path");
+					reportContent = await readFile(resolve(ctx.cwd, ".pi/scout-report.md"), "utf-8");
+				} catch (e) {}
 				return {
-					content: [{ type: "text", text: `Scout Report:\n${scoutReport}` }],
-					details: { completed: true },
+					content: [{ type: "text", text: `Scout Report (.pi/scout-report.md):\n${reportContent}` }],
+					details: null,
 				};
 			} finally {
 				scout.dispose();
 			}
-		}
+		},
 	});
 
 	pi.registerCommand("plan", {
@@ -647,14 +860,22 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.on("context", async (event) => {
-		return {
-			messages: event.messages.filter((message) => {
-				const customType = "customType" in message ? message.customType : undefined;
-				if (customType === "plan-mode-context" && !planModeEnabled) return false;
-				if (customType === "plan-execution-context" && !executionMode) return false;
-				return true;
-			}),
-		};
+		const filtered = event.messages.filter((message) => {
+			const customType = "customType" in message ? message.customType : undefined;
+			if (customType === "plan-mode-context" && !planModeEnabled) return false;
+			if (customType === "plan-execution-context" && !executionMode) return false;
+			return true;
+		});
+
+		if (planModeEnabled && backgroundSummaries.length > 0) {
+			filtered.push({
+				role: "system",
+				content: [{ type: "text", text: backgroundSummaries.join("\n\n") }],
+				timestamp: Date.now(),
+			} as any);
+		}
+
+		return { messages: filtered };
 	});
 
 	pi.on("before_agent_start", async (event) => {
@@ -690,6 +911,16 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 	pi.on("agent_end", async (_event, ctx) => {
 		planAgentRunning = false;
 		updateStatus(ctx);
+
+		if (planModeEnabled && backgroundAgent) {
+			const currentMessagesLength = ctx.sessionManager.buildSessionContext().messages.length;
+			const addedMessages = currentMessagesLength - planMessageCountAtStart;
+			if (addedMessages >= lastSummaryMessageCount + 10) {
+				lastSummaryMessageCount = addedMessages;
+				void runBackgroundSummary(ctx);
+			}
+		}
+
 		if (executionRunTransitionCount !== undefined) {
 			const progressed =
 				(runtimeSnapshot?.transitionCount ?? executionRunTransitionCount) > executionRunTransitionCount;

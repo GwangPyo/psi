@@ -111,8 +111,8 @@ import { BashExecutionComponent } from "./components/bash-execution.ts";
 import { BorderedLoader } from "./components/bordered-loader.ts";
 import { BranchSummaryMessageComponent } from "./components/branch-summary-message.ts";
 import { CompactionSummaryMessageComponent } from "./components/compaction-summary-message.ts";
-import { ContextUsageMessageComponent } from "./components/context-usage-message.ts";
 import { setResolvedResourceEnabled } from "./components/config-selector.ts";
+import { ContextUsageMessageComponent } from "./components/context-usage-message.ts";
 import { CustomEditor } from "./components/custom-editor.ts";
 import { CustomEntryComponent } from "./components/custom-entry.ts";
 import { CustomMessageComponent } from "./components/custom-message.ts";
@@ -2770,6 +2770,16 @@ export class InteractiveMode {
 				this.editor.setText("");
 				return;
 			}
+			if (text === "/emotion") {
+				this.editor.setText("");
+				const bgContext = (this.session as any).backgroundEmotionDaemon?.backgroundRunningContext;
+				if (bgContext) {
+					this.showStatus(`Background Context:\n${bgContext}`);
+				} else {
+					this.showStatus("No background context available.");
+				}
+				return;
+			}
 			if (text === "/scoped-models") {
 				this.editor.setText("");
 				await this.showModelsSelector();
@@ -2865,6 +2875,19 @@ export class InteractiveMode {
 			if (text === "/logout") {
 				this.showOAuthSelector("logout");
 				this.editor.setText("");
+				return;
+			}
+			if (text.startsWith("/broadcast ")) {
+				const msg = text.slice(11).trim();
+				this.editor.setText("");
+				if (msg) {
+					const delivered = await this.session.broadcast(msg);
+					if (delivered) {
+						this.showStatus(`Broadcasted message to active agents: ${msg}`);
+					} else {
+						this.showError("No active agents to broadcast to.");
+					}
+				}
 				return;
 			}
 			if (text === "/new") {
@@ -6312,21 +6335,23 @@ export class InteractiveMode {
 			this.showError("Error retrieving messages: " + String(err));
 			return;
 		}
-		
+
 		const systemPromptText = "System prompt";
 		const systemToolsLength = 50000;
 		const skillsLength = 1500;
 		const subagentsLength = 2000;
-		
+
 		this.chatContainer.addChild(new Spacer(1));
-		this.chatContainer.addChild(new ContextUsageMessageComponent(
-			this.session, 
-			llmMessages, 
-			systemPromptText, 
-			systemToolsLength, 
-			skillsLength, 
-			subagentsLength
-		));
+		this.chatContainer.addChild(
+			new ContextUsageMessageComponent(
+				this.session,
+				llmMessages,
+				systemPromptText,
+				systemToolsLength,
+				skillsLength,
+				subagentsLength,
+			),
+		);
 		this.ui.requestRender();
 	}
 

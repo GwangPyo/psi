@@ -7,7 +7,14 @@
 
 import type { AgentMessage, StreamFn, ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { contentText, type RetryCallbacks, type RetryPolicy, retryAssistantCall } from "@earendil-works/pi-ai";
-import type { AssistantMessage, Context, Model, SimpleStreamOptions, Usage, Message } from "@earendil-works/pi-ai/compat";
+import type {
+	AssistantMessage,
+	Context,
+	Message,
+	Model,
+	SimpleStreamOptions,
+	Usage,
+} from "@earendil-works/pi-ai/compat";
 import { completeSimple } from "@earendil-works/pi-ai/compat";
 import { convertToLlm } from "../messages.ts";
 import {
@@ -633,11 +640,11 @@ export async function generateSummaryWithUsage(
 
 	// Convert to LLM messages
 	const llmMessages = convertToLlm(currentMessages);
-	
+
 	// Group into turns
-	const turns: { userPrompt?: string, agentMessages: Message[] }[] = [];
-	let currentTurn: { userPrompt?: string, agentMessages: Message[] } | undefined;
-	
+	const turns: { userPrompt?: string; agentMessages: Message[] }[] = [];
+	let currentTurn: { userPrompt?: string; agentMessages: Message[] } | undefined;
+
 	for (const msg of llmMessages) {
 		if (msg.role === "user") {
 			if (currentTurn) turns.push(currentTurn);
@@ -649,58 +656,77 @@ export async function generateSummaryWithUsage(
 		}
 	}
 	if (currentTurn) turns.push(currentTurn);
-	
+
 	// Process turns in parallel
-	let totalUsage: Usage = { 
-		input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, 
-		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } 
+	let totalUsage: Usage = {
+		input: 0,
+		output: 0,
+		cacheRead: 0,
+		cacheWrite: 0,
+		totalTokens: 0,
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 	};
-	
-	const turnResults = await Promise.all(turns.map(async (turn) => {
-		let agentSummary = "";
-		if (turn.agentMessages.length > 0) {
-			const turnText = serializeConversation(turn.agentMessages);
-			let promptText = `Please summarize the following agent actions during this single conversation turn:\n\n<agent-actions>\n${turnText}\n</agent-actions>\n\nKeep it concise and factual. Preserve exact file paths, function names, and error messages.`;
-			if (customInstructions) {
-				promptText += `\n\nAdditional focus: ${customInstructions}`;
-			}
-			
-			const summarizationMessages = [
-				{ role: "user" as const, content: [{ type: "text" as const, text: promptText }], timestamp: Date.now() },
-			];
-			const completionOptions = createSummarizationOptions(model, maxTokens, apiKey, headers, env, signal, thinkingLevel);
-			
-			try {
-				const response = await completeSummarization(
-					model,
-					{ systemPrompt: "You are a helpful assistant that summarizes agent actions.", messages: summarizationMessages },
-					completionOptions,
-					streamFn,
-					retry,
-					callbacks,
-				);
-				
-				if (response.stopReason !== "error") {
-					agentSummary = contentText(response.content);
-					totalUsage = combineUsage(totalUsage, response.usage);
-				} else {
-					agentSummary = "[Failed to summarize agent actions: " + (response.errorMessage || "Unknown error") + "]";
+
+	const turnResults = await Promise.all(
+		turns.map(async (turn) => {
+			let agentSummary = "";
+			if (turn.agentMessages.length > 0) {
+				const turnText = serializeConversation(turn.agentMessages);
+				let promptText = `Please summarize the following agent actions during this single conversation turn:\n\n<agent-actions>\n${turnText}\n</agent-actions>\n\nKeep it concise and factual. Preserve exact file paths, function names, and error messages.`;
+				if (customInstructions) {
+					promptText += `\n\nAdditional focus: ${customInstructions}`;
 				}
-			} catch (err) {
-				agentSummary = "[Error during summarization: " + (err instanceof Error ? err.message : String(err)) + "]";
+
+				const summarizationMessages = [
+					{ role: "user" as const, content: [{ type: "text" as const, text: promptText }], timestamp: Date.now() },
+				];
+				const completionOptions = createSummarizationOptions(
+					model,
+					maxTokens,
+					apiKey,
+					headers,
+					env,
+					signal,
+					thinkingLevel,
+				);
+
+				try {
+					const response = await completeSummarization(
+						model,
+						{
+							systemPrompt: "You are a helpful assistant that summarizes agent actions.",
+							messages: summarizationMessages,
+						},
+						completionOptions,
+						streamFn,
+						retry,
+						callbacks,
+					);
+
+					if (response.stopReason !== "error") {
+						agentSummary = contentText(response.content);
+						totalUsage = combineUsage(totalUsage, response.usage);
+					} else {
+						agentSummary =
+							"[Failed to summarize agent actions: " + (response.errorMessage || "Unknown error") + "]";
+					}
+				} catch (err) {
+					agentSummary =
+						"[Error during summarization: " + (err instanceof Error ? err.message : String(err)) + "]";
+				}
 			}
-		}
-		
-		let text = "";
-		if (turn.userPrompt) {
-			text += `User: ${turn.userPrompt}\n`;
-		}
-		if (agentSummary) {
-			text += `Agent: ${agentSummary}\n`;
-		}
-		return text.trim();
-	}));
-	
+
+			let text = "";
+			if (turn.userPrompt) {
+				text += `User: ${turn.userPrompt}\n`;
+			}
+			if (agentSummary) {
+				text += `Agent: ${agentSummary}\n`;
+			}
+			return text.trim();
+		}),
+	);
+
 	let textContent = "";
 	if (previousSummary) {
 		textContent += previousSummary + "\n\n---\n\n";

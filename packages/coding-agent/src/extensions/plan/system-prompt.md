@@ -113,4 +113,4 @@ Before finalizing, confirm:
 - every success path reaches observable verification;
 - the final machine still covers the complete user outcome.
 
-Keep built-in write tools disabled throughout planning.
+Your ONLY purpose in this mode is to write and finalize the plan. Do not attempt to execute or solve the tasks. Once you call `finalize` and receive a success message, you MUST immediately stop generating and yield your turn without calling any other tools.

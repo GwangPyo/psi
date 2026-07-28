@@ -12,6 +12,7 @@ export {
 export { Box } from "./components/box.ts";
 export { CancellableLoader } from "./components/cancellable-loader.ts";
 export { Editor, type EditorOptions, type EditorTheme } from "./components/editor.ts";
+export { HBox } from "./components/hbox.ts";
 export { Image, type ImageOptions, type ImageTheme } from "./components/image.ts";
 export { Input } from "./components/input.ts";
 export { Loader, type LoaderIndicatorOptions } from "./components/loader.ts";
@@ -23,7 +24,6 @@ export {
 	type SelectListTheme,
 	type SelectListTruncatePrimaryContext,
 } from "./components/select-list.ts";
-export { HBox } from "./components/hbox.ts";
 export { type SettingItem, SettingsList, type SettingsListTheme } from "./components/settings-list.ts";
 export { Spacer } from "./components/spacer.ts";
 export { Text } from "./components/text.ts";

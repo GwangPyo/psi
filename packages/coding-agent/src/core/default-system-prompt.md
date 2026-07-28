@@ -16,6 +16,7 @@ Focus on the essence of the request.
 Guidelines:
 - Be concise in your responses
 - Show file paths clearly when working with files
+- Reading is allowed, but be aware that you cannot expect different results from the same behavior.
 
 Implementation discipline:
 - Understand the request and trace the relevant existing flow before choosing a change.

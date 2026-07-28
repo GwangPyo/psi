@@ -2,10 +2,10 @@
  * Shared utilities for compaction and branch summarization.
  */
 
-import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import { contentText, type Message } from "@earendil-works/pi-ai";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import { contentText, type Message } from "@earendil-works/pi-ai";
 import { getPackageDir } from "../../config.ts";
 
 // ============================================================================
@@ -180,7 +180,7 @@ let summarizationSystemPromptTemplate: string | undefined;
 
 function getSummarizationSystemPromptTemplate(): string {
 	if (summarizationSystemPromptTemplate !== undefined) return summarizationSystemPromptTemplate;
-	
+
 	const packageDir = getPackageDir();
 	const filename = "summarization-system-prompt.md";
 	const candidates = [

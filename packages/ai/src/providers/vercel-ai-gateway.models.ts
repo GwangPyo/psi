@@ -249,10 +249,6 @@ export const VERCEL_AI_GATEWAY_MODELS = values as {
 		id: "google/gemini-3-flash";
 		provider: "vercel-ai-gateway";
 	};
-	"google/gemini-3-pro-preview": Model<"anthropic-messages"> & {
-		id: "google/gemini-3-pro-preview";
-		provider: "vercel-ai-gateway";
-	};
 	"google/gemini-3.1-flash-lite": Model<"anthropic-messages"> & {
 		id: "google/gemini-3.1-flash-lite";
 		provider: "vercel-ai-gateway";

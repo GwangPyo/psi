@@ -2,10 +2,10 @@ import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { contentText, type Model } from "@earendil-works/pi-ai";
-import { getPackageDir, getAgentDir } from "../../config.ts";
+import { getAgentDir, getPackageDir } from "../../config.ts";
 import type { ExtensionAPI, ExtensionCommandContext, SpawnedAgent } from "../../core/extensions/types.ts";
-import { formatTemplate } from "../../utils/template.ts";
 import { SettingsManager } from "../../core/settings-manager.ts";
+import { formatTemplate } from "../../utils/template.ts";
 import { type AnimatedStatus, startAnimatedStatus } from "../animated-status.ts";
 import { isSafeCommand } from "../plan/utils.ts";
 
@@ -145,7 +145,7 @@ const promptCache = new Map<string, string>();
 
 function getAdversarialPromptTemplate(filename: string): string {
 	if (promptCache.has(filename)) return promptCache.get(filename)!;
-	
+
 	const packageDir = getPackageDir();
 	const candidates = [
 		path.join(packageDir, "src", "extensions", "adversarial-conversation", filename),
