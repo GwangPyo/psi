@@ -1,4 +1,4 @@
-# PSI — A Structured, Multi-Agent Fork of Pi
+# PSI
 
 PSI extends the Pi coding agent with finite-state planning, specification-first implementation, role-based model orchestration, automatic intention analysis, and user-prompt-prioritized context compaction.
 
