@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { googleGeminiCliOAuth } from "../src/auth/oauth/google-gemini-cli.ts";
 
 const ANTIGRAVITY_CLIENT_ID = "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com";
-const MANUAL_REDIRECT_URI = "http://localhost:51121/oauth-callback";
+const REDIRECT_URI = "https://antigravity.google/oauth-callback";
 
 function jsonResponse(body: unknown, status: number = 200): Response {
 	return new Response(JSON.stringify(body), {
@@ -25,7 +25,7 @@ describe("Google Antigravity OAuth", () => {
 		vi.useRealTimers();
 	});
 
-	it("uses Antigravity OAuth credentials for headless login and accepts the failed loopback URL", async () => {
+	it("uses the Antigravity OAuth client and hosted callback", async () => {
 		vi.useFakeTimers();
 		const now = new Date("2026-07-29T00:00:00Z");
 		vi.setSystemTime(now);
@@ -35,8 +35,8 @@ describe("Google Antigravity OAuth", () => {
 			if (url === "https://oauth2.googleapis.com/token") {
 				const params = new URLSearchParams(String(init?.body));
 				expect(params.get("client_id")).toBe(ANTIGRAVITY_CLIENT_ID);
-				expect(params.get("code")).toBe("authorization-code");
-				expect(params.get("redirect_uri")).toBe(MANUAL_REDIRECT_URI);
+				expect(params.get("code")).toBe("4/authorization-code");
+				expect(params.get("redirect_uri")).toBe(REDIRECT_URI);
 				expect(params.get("code_verifier")).not.toBe("");
 				return jsonResponse({
 					access_token: "access-token",
@@ -58,26 +58,24 @@ describe("Google Antigravity OAuth", () => {
 		let authorizationUrl: URL | undefined;
 		const credential = await googleGeminiCliOAuth.login({
 			prompt: async (prompt) => {
-				if (prompt.type === "select") return "manual_code";
 				if (prompt.type !== "manual_code") throw new Error(`Unexpected prompt: ${prompt.type}`);
-				if (!authorizationUrl) throw new Error("Missing authorization URL");
-				const state = authorizationUrl.searchParams.get("state");
-				return `${MANUAL_REDIRECT_URI}?code=authorization-code&state=${state}`;
+				return "4%2Fauthorization-code";
 			},
 			notify: (event) => {
+				if (event.type === "device_code") throw new Error("Device authorization must not be used");
 				if (event.type === "auth_url") authorizationUrl = new URL(event.url);
 			},
 		});
 
 		expect(authorizationUrl?.searchParams.get("client_id")).toBe(ANTIGRAVITY_CLIENT_ID);
-		expect(authorizationUrl?.searchParams.get("redirect_uri")).toBe(MANUAL_REDIRECT_URI);
+		expect(authorizationUrl?.searchParams.get("redirect_uri")).toBe(REDIRECT_URI);
 		expect(authorizationUrl?.searchParams.get("scope")?.split(" ")).toEqual(
 			expect.arrayContaining([
+				"https://www.googleapis.com/auth/cloud-platform",
 				"https://www.googleapis.com/auth/cclog",
 				"https://www.googleapis.com/auth/experimentsandconfigs",
 			]),
 		);
-		expect(authorizationUrl?.searchParams.get("scope")).not.toContain("https://www.googleapis.com/auth/aicode");
 		expect(credential).toEqual({
 			type: "oauth",
 			access: "access-token",
