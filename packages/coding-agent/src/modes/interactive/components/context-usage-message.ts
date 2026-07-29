@@ -8,30 +8,15 @@ export class ContextUsageMessageComponent implements Component {
 	private lines: string[] = [];
 	private session: AgentSession;
 	private llmMessages: AgentMessage[];
-	private systemPromptText: string;
-	private systemToolsLength: number;
-	private skillsLength: number;
-	private subagentsLength: number;
 
-	constructor(
-		session: AgentSession,
-		llmMessages: AgentMessage[],
-		systemPromptText: string,
-		systemToolsLength: number,
-		skillsLength: number,
-		subagentsLength: number,
-	) {
+	constructor(session: AgentSession, llmMessages: AgentMessage[]) {
 		this.session = session;
 		this.llmMessages = llmMessages;
-		this.systemPromptText = systemPromptText;
-		this.systemToolsLength = systemToolsLength;
-		this.skillsLength = skillsLength;
-		this.subagentsLength = subagentsLength;
 	}
 
 	invalidate(): void {}
 
-	render(width: number): string[] {
+	render(_width: number): string[] {
 		if (this.lines.length > 0) return this.lines;
 
 		const modelName = this.session.model?.name || this.session.model?.id || "Unknown Model";
@@ -42,7 +27,8 @@ export class ContextUsageMessageComponent implements Component {
 		let toolCallTokens = 0;
 		let systemPromptTokens = 0;
 
-		for (const msg of this.llmMessages as any[]) {
+		for (const msg of this.llmMessages) {
+			if (!("content" in msg)) continue;
 			let textLength = 0;
 			if (typeof msg.content === "string") {
 				textLength = msg.content.length;
@@ -59,16 +45,16 @@ export class ContextUsageMessageComponent implements Component {
 				userTokens += tokens;
 			} else if (msg.role === "assistant") {
 				assistantTokens += tokens;
-			} else if (msg.role === "toolResult" || msg.role === "tool") {
+			} else if (msg.role === "toolResult") {
 				toolCallTokens += tokens;
-			} else if (msg.role === "system") {
+			} else {
 				systemPromptTokens += tokens;
 			}
 		}
 
 		// Calculate tools dynamically instead of relying on hardcoded lengths
 		let systemToolsTokens = 0;
-		if (this.session.agent.state && this.session.agent.state.tools) {
+		if (this.session.agent.state?.tools) {
 			const tools = this.session.agent.state.tools;
 			if (tools) {
 				systemToolsTokens = Math.ceil(JSON.stringify(tools).length / 4);
@@ -90,7 +76,7 @@ export class ContextUsageMessageComponent implements Component {
 			subagentsTokens;
 		const freeSpace = Math.max(0, maxTokens - totalUsed);
 
-		const pct = (val: number) => ((val / maxTokens) * 100).toFixed(1) + "%";
+		const pct = (val: number) => `${((val / maxTokens) * 100).toFixed(1)}%`;
 
 		const blockUser = theme.fg("accent", "●");
 		const blockAssistant = theme.fg("success", "◉");

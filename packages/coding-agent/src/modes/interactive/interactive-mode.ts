@@ -6382,31 +6382,16 @@ export class InteractiveMode {
 	}
 
 	private async handleContextCommand(): Promise<void> {
-		const sessionContext = this.session.sessionManager.buildSessionContext();
-		let llmMessages: any[] = [];
+		let llmMessages: AgentMessage[] = [];
 		try {
 			llmMessages = await this.session.agent.convertToLlm(this.session.agent.state.messages);
 		} catch (err) {
-			this.showError("Error retrieving messages: " + String(err));
+			this.showError(`Error retrieving messages: ${String(err)}`);
 			return;
 		}
 
-		const systemPromptText = "System prompt";
-		const systemToolsLength = 50000;
-		const skillsLength = 1500;
-		const subagentsLength = 2000;
-
 		this.chatContainer.addChild(new Spacer(1));
-		this.chatContainer.addChild(
-			new ContextUsageMessageComponent(
-				this.session,
-				llmMessages,
-				systemPromptText,
-				systemToolsLength,
-				skillsLength,
-				subagentsLength,
-			),
-		);
+		this.chatContainer.addChild(new ContextUsageMessageComponent(this.session, llmMessages));
 		this.ui.requestRender();
 	}
 

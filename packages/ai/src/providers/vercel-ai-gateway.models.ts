@@ -93,6 +93,10 @@ export const VERCEL_AI_GATEWAY_MODELS = values as {
 		id: "alibaba/qwen3.6-plus";
 		provider: "vercel-ai-gateway";
 	};
+	"alibaba/qwen3.7-flash": Model<"anthropic-messages"> & {
+		id: "alibaba/qwen3.7-flash";
+		provider: "vercel-ai-gateway";
+	};
 	"alibaba/qwen3.7-max": Model<"anthropic-messages"> & {
 		id: "alibaba/qwen3.7-max";
 		provider: "vercel-ai-gateway";

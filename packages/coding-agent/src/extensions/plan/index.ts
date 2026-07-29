@@ -5,6 +5,8 @@
  * persisted machine through explicit, structured transition tool calls.
  */
 
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import { type Component, HBox, Key, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { getAgentDir } from "../../config.ts";
@@ -205,7 +207,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 					summary = match[0];
 				} else {
 					const lastSpace = summary.lastIndexOf(" ", 197);
-					summary = (lastSpace > 0 ? summary.substring(0, lastSpace) : summary.substring(0, 197)) + "...";
+					summary = `${lastSpace > 0 ? summary.substring(0, lastSpace) : summary.substring(0, 197)}...`;
 				}
 			}
 
@@ -814,15 +816,13 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 			try {
 				try {
 					await scout.prompt(params.prompt);
-				} catch (e: any) {
-					if (e.message !== "SCOUT_FINISHED_REPORT") throw e;
+				} catch (error) {
+					if (!(error instanceof Error) || error.message !== "SCOUT_FINISHED_REPORT") throw error;
 				}
 				let reportContent = "Report file not found.";
 				try {
-					const { readFile } = await import("node:fs/promises");
-					const { resolve } = await import("node:path");
 					reportContent = await readFile(resolve(ctx.cwd, ".pi/scout-report.md"), "utf-8");
-				} catch (e) {}
+				} catch {}
 				return {
 					content: [{ type: "text", text: `Scout Report (.pi/scout-report.md):\n${reportContent}` }],
 					details: null,

@@ -2073,7 +2073,7 @@ Inspect only that tool's definition, schema, and guidance. Call it exactly once.
 				throw new Error(formatNoModelSelectedMessage());
 			}
 
-			const { apiKey, headers, env } = await this.getSummarizationRequestAuth(this.model);
+			await this.getSummarizationRequestAuth(this.model);
 
 			const pathEntries = this.sessionManager.getBranch();
 			const settings = this.settingsManager.getCompactionSettings();

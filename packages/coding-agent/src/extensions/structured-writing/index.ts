@@ -1,6 +1,6 @@
 import { Type } from "typebox";
 import { getAgentDir } from "../../config.ts";
-import type { ExtensionAPI, ExtensionContext } from "../../core/extensions/types.ts";
+import type { ExtensionAPI } from "../../core/extensions/types.ts";
 import { SettingsManager } from "../../core/settings-manager.ts";
 
 export interface SWFunction {
@@ -83,7 +83,7 @@ export default function structuredWritingExtension(pi: ExtensionAPI): void {
 		parameters: Type.Object({
 			description: Type.String({ description: "Description of the subgoal." }),
 		}),
-		execute: async (_id, params, _sig, _update, ctx) => {
+		execute: async (_id, params, _sig, _update, _ctx) => {
 			if (!swManager.enabled) throw new Error("Structured Writing mode is not enabled.");
 			if (swManager.currentSubgoal && swManager.currentSubgoal.status !== "done") {
 				throw new Error(`Current subgoal is not done: ${swManager.currentSubgoal.description}`);
@@ -117,7 +117,7 @@ export default function structuredWritingExtension(pi: ExtensionAPI): void {
 				}),
 			),
 		}),
-		execute: async (_id, params, _sig, _update, ctx) => {
+		execute: async (_id, params, _sig, _update, _ctx) => {
 			if (!swManager.enabled || !swManager.currentSubgoal) throw new Error("No active subgoal.");
 			if (swManager.currentSubgoal.status !== "spec_phase") throw new Error("Not in spec_phase.");
 
@@ -208,7 +208,7 @@ export default function structuredWritingExtension(pi: ExtensionAPI): void {
 			functionName: Type.String(),
 			decision: Type.Union([Type.Literal("accept"), Type.Literal("reject")]),
 		}),
-		execute: async (_id, params, _sig, _update, ctx) => {
+		execute: async (_id, params, _sig, _update, _ctx) => {
 			if (!swManager.enabled || !swManager.currentSubgoal) throw new Error("No active subgoal.");
 			const func = swManager.currentSubgoal.functions[params.functionName];
 			if (!func) throw new Error(`Function ${params.functionName} not found.`);
@@ -248,7 +248,7 @@ export default function structuredWritingExtension(pi: ExtensionAPI): void {
 		parameters: Type.Object({
 			functionName: Type.String(),
 		}),
-		execute: async (_id, params, _sig, _update, ctx) => {
+		execute: async (_id, params, _sig, _update, _ctx) => {
 			if (!swManager.enabled || !swManager.currentSubgoal) throw new Error("No active subgoal.");
 			const func = swManager.currentSubgoal.functions[params.functionName];
 			if (!func) throw new Error(`Function ${params.functionName} not found.`);
@@ -277,7 +277,7 @@ export default function structuredWritingExtension(pi: ExtensionAPI): void {
 		label: "Finish Subgoal",
 		description: "[Structured Writing] Finish the current subgoal.",
 		parameters: Type.Object({}),
-		execute: async (_id, _params, _sig, _update, ctx) => {
+		execute: async (_id, _params, _sig, _update, _ctx) => {
 			if (!swManager.enabled || !swManager.currentSubgoal) throw new Error("No active subgoal.");
 
 			const pending = Object.values(swManager.currentSubgoal.functions).filter(

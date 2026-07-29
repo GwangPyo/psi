@@ -114,7 +114,7 @@ export class BackgroundEmotionDaemon {
 			import("node:fs").then((fs) =>
 				fs.appendFileSync(
 					".pi/emotion-analysis-error.log",
-					"\n[" + new Date().toISOString() + "] Emotion Analysis Error:\n" + (e.stack || e) + "\n",
+					`\n[${new Date().toISOString()}] Emotion Analysis Error:\n${e.stack || e}\n`,
 				),
 			);
 			return false;
