@@ -59,7 +59,7 @@ const AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
 const USER_INFO_URL = "https://www.googleapis.com/oauth2/v2/userinfo";
 const CODE_ASSIST_ENDPOINT = "https://daily-cloudcode-pa.googleapis.com";
-const MANUAL_REDIRECT_URI = "http://localhost:51121/oauth-callback";
+const MANUAL_REDIRECT_URI = "https://codeassist.google.com/authcode";
 const CALLBACK_PATH = "/oauth2callback";
 const REFRESH_SKEW_MS = 5 * 60 * 1000;
 const ONBOARD_TIMEOUT_MS = 5 * 60 * 1000;
@@ -449,6 +449,7 @@ async function credentialFromToken(token: GoogleTokenResponse, interaction: Auth
 	};
 }
 
+/** Complete headless Google OAuth through Code Assist's hosted authorization-code callback. */
 async function loginWithManualCode(interaction: AuthInteraction): Promise<OAuthCredential> {
 	const { verifier, challenge } = await generatePKCE();
 	const state = createState();

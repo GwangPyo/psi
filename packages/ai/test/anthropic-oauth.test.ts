@@ -36,7 +36,7 @@ describe.sequential("Anthropic OAuth", () => {
 		vi.unstubAllGlobals();
 	});
 
-	it("keeps the localhost redirect_uri for manual callback login", async () => {
+	it("uses Anthropic's hosted callback for headless login", async () => {
 		let authUrl = "";
 		const fetchMock = vi.fn(async (input: unknown, init?: RequestInit): Promise<Response> => {
 			expect(getUrl(input)).toBe("https://platform.claude.com/v1/oauth/token");
@@ -44,7 +44,7 @@ describe.sequential("Anthropic OAuth", () => {
 			const body = getJsonBody(init);
 			expect(body.grant_type).toBe("authorization_code");
 			expect(body.code).toBe("manual-code");
-			expect(body.redirect_uri).toBe("http://localhost:53692/callback");
+			expect(body.redirect_uri).toBe("https://console.anthropic.com/oauth/code/callback");
 			return jsonResponse({
 				access_token: "access-token",
 				refresh_token: "refresh-token",
@@ -63,7 +63,9 @@ describe.sequential("Anthropic OAuth", () => {
 				const state = url.searchParams.get("state");
 				const redirectUri = url.searchParams.get("redirect_uri");
 				if (!state || !redirectUri) throw new Error("Missing OAuth state or redirect_uri in auth URL");
-				return `${redirectUri}?code=manual-code&state=${state}`;
+				expect(redirectUri).toBe("https://console.anthropic.com/oauth/code/callback");
+				expect(authUrl).not.toContain("localhost");
+				return `manual-code#${state}`;
 			},
 		});
 
@@ -101,7 +103,7 @@ describe.sequential("Anthropic OAuth", () => {
 		expect(fetchMock).toHaveBeenCalledOnce();
 	});
 
-	it("anthropicOAuth.login resolves through the manual_code prompt and aborts it after settling", async () => {
+	it("anthropicOAuth.login resolves through the manual_code prompt", async () => {
 		const fetchMock = vi.fn(async (input: unknown): Promise<Response> => {
 			const url = typeof input === "string" ? input : String(input);
 			if (url.includes("/oauth/token")) {
@@ -113,16 +115,11 @@ describe.sequential("Anthropic OAuth", () => {
 
 		const events: AuthEvent[] = [];
 		const prompts: AuthPrompt[] = [];
-		let manualSignal: AbortSignal | undefined;
-
 		const credential = await anthropicOAuth.login({
 			notify: (event) => events.push(event),
 			prompt: async (prompt) => {
 				prompts.push(prompt);
-				if (prompt.type === "manual_code") {
-					manualSignal = prompt.signal;
-					return "the-code";
-				}
+				if (prompt.type === "manual_code") return "the-code";
 				throw new Error(`Unexpected prompt: ${prompt.type}`);
 			},
 		});
@@ -131,7 +128,5 @@ describe.sequential("Anthropic OAuth", () => {
 		expect(credential.access).toBe("access");
 		expect(events.some((e) => e.type === "auth_url")).toBe(true);
 		expect(prompts.some((p) => p.type === "manual_code")).toBe(true);
-		// the prompt's signal is aborted once login settles, so UIs can dismiss it
-		expect(manualSignal?.aborted).toBe(true);
 	});
 });
