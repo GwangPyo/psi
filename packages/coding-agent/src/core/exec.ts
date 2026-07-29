@@ -55,7 +55,7 @@ export async function execCommand(
 				proc.kill("SIGTERM");
 				// Force kill after 5 seconds if SIGTERM doesn't work
 				setTimeout(() => {
-					if (!proc.killed) {
+					if (proc.exitCode === null && proc.signalCode === null) {
 						proc.kill("SIGKILL");
 					}
 				}, 5000);

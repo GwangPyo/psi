@@ -1,3 +1,6 @@
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { Compile } from "typebox/compile";
 import { describe, expect, it, vi } from "vitest";
@@ -15,7 +18,20 @@ type CommandHandler = (args: string, ctx: ExtensionContext) => Promise<void> | v
 type EventHandler = (event: unknown, ctx: ExtensionContext) => Promise<unknown> | unknown;
 
 function setup(
-	options: { confirmChoice?: boolean; selectChoice?: string; editorAnswer?: string; entries?: unknown[] } = {},
+	options: {
+		confirmChoice?: boolean;
+		selectChoice?: string;
+		editorAnswer?: string;
+		entries?: unknown[];
+		cwd?: string;
+		model?: { provider: string; id: string };
+		spawnAgent?: (options: { systemPrompt: string }) => {
+			prompt(message: string): Promise<string>;
+			abort(): Promise<void>;
+			appendUserMessage(message: string): Promise<void>;
+			dispose(): void;
+		};
+	} = {},
 ) {
 	let activeTools = ["read", "bash", "edit", "write", "echo_tool"];
 	const commands = new Map<string, CommandHandler>();
@@ -41,6 +57,11 @@ function setup(
 		setActiveTools: vi.fn((toolNames: string[]) => {
 			activeTools = [...toolNames];
 		}),
+		spawnAgent:
+			options.spawnAgent ??
+			(() => {
+				throw new Error("Unexpected spawned agent");
+			}),
 		sendMessage: vi.fn(),
 		sendUserMessage: vi.fn(),
 		appendEntry(customType: string, data: unknown) {
@@ -51,6 +72,11 @@ function setup(
 	planModeExtension(api);
 
 	const ctx = {
+		cwd: options.cwd ?? process.cwd(),
+		model: options.model,
+		modelRegistry: { find: vi.fn(() => undefined) },
+		isProjectTrusted: () => true,
+		getSystemPrompt: () => "main system prompt",
 		hasUI: true,
 		ui: {
 			notify: vi.fn(),
@@ -200,6 +226,128 @@ async function completeReviewCycle(
 }
 
 describe("built-in PlanFSM extension", () => {
+	it("persists scout input and output as a JSON artifact that the main agent can read", async () => {
+		const cwd = await mkdtemp(join(tmpdir(), "pi-scout-artifact-"));
+		const prompt = vi.fn(async () => "Found the relevant implementation in src/scout.ts.");
+		const dispose = vi.fn();
+		const spawnAgent = vi.fn(() => ({
+			prompt,
+			abort: vi.fn(async () => {}),
+			appendUserMessage: vi.fn(async () => {}),
+			dispose,
+		}));
+		const harness = setup({ cwd, model: { provider: "test", id: "scout" }, spawnAgent });
+
+		try {
+			const scoutResult = (await harness.executeTool("scout", { prompt: "Find the scout implementation." })) as {
+				details: { artifactId: string; artifactPath: string; status: string };
+			};
+			const { artifactId, artifactPath, status } = scoutResult.details;
+			const serialized = await readFile(join(cwd, artifactPath), "utf8");
+			const artifact = JSON.parse(serialized) as {
+				input: { prompt: string };
+				output: { status: string; text?: string };
+			};
+
+			expect(status).toBe("completed");
+			expect(prompt).toHaveBeenCalledWith("Find the scout implementation.");
+			expect(artifact.input.prompt).toBe("Find the scout implementation.");
+			expect(artifact.output).toEqual({
+				status: "completed",
+				text: "Found the relevant implementation in src/scout.ts.",
+			});
+			expect(dispose).toHaveBeenCalledOnce();
+
+			const readResult = (await harness.executeTool("read_scout_result", { artifactId })) as {
+				content: Array<{ type: string; text?: string }>;
+			};
+			expect(readResult.content[0]).toMatchObject({ type: "text", text: serialized });
+		} finally {
+			await rm(cwd, { recursive: true, force: true });
+		}
+	});
+
+	it("lets a scout finish early through finish_scout and save its summary", async () => {
+		const cwd = await mkdtemp(join(tmpdir(), "pi-scout-finish-"));
+		let executeTool: ReturnType<typeof setup>["executeTool"] | undefined;
+		const spawnAgent = vi.fn((options: { systemPrompt: string }) => ({
+			prompt: vi.fn(async () => {
+				const artifactId = /JSON artifact `([0-9a-f-]+)`/u.exec(options.systemPrompt)?.[1];
+				if (!artifactId || !executeTool) throw new Error("Scout finish context was not initialized");
+				const finished = (await executeTool("finish_scout", {
+					artifactId,
+					summary: "Found the relevant evidence in src/scout.ts.",
+				})) as { terminate?: boolean };
+				expect(finished.terminate).toBe(true);
+				throw new Error("Spawned agent returned no text");
+			}),
+			abort: vi.fn(async () => {}),
+			appendUserMessage: vi.fn(async () => {}),
+			dispose: vi.fn(),
+		}));
+		const harness = setup({ cwd, model: { provider: "test", id: "scout" }, spawnAgent });
+		executeTool = harness.executeTool;
+
+		try {
+			const result = (await harness.executeTool("scout", { prompt: "Find the scout implementation." })) as {
+				details: { artifactId: string; artifactPath: string; status: string };
+			};
+			const serialized = await readFile(join(cwd, result.details.artifactPath), "utf8");
+			const artifact = JSON.parse(serialized) as { output: { status: string; text?: string } };
+
+			expect(result.details.status).toBe("completed");
+			expect(artifact.output).toEqual({
+				status: "completed",
+				text: "Found the relevant evidence in src/scout.ts.",
+			});
+			expect(spawnAgent.mock.calls[0]?.[0].systemPrompt).toContain("finish_scout");
+		} finally {
+			await rm(cwd, { recursive: true, force: true });
+		}
+	});
+
+	it("stops a scout after three minutes and records the timeout", async () => {
+		vi.useFakeTimers();
+		const cwd = await mkdtemp(join(tmpdir(), "pi-scout-timeout-"));
+		let rejectPrompt: ((error: Error) => void) | undefined;
+		let resolvePromptStarted!: () => void;
+		const promptStarted = new Promise<void>((resolve) => {
+			resolvePromptStarted = resolve;
+		});
+		const abort = vi.fn(async () => rejectPrompt?.(new Error("aborted")));
+		const spawnAgent = vi.fn(() => ({
+			prompt: vi.fn(
+				async () =>
+					await new Promise<string>((_resolve, reject) => {
+						rejectPrompt = reject;
+						resolvePromptStarted();
+					}),
+			),
+			abort,
+			appendUserMessage: vi.fn(async () => {}),
+			dispose: vi.fn(),
+		}));
+		const harness = setup({ cwd, model: { provider: "test", id: "scout" }, spawnAgent });
+
+		try {
+			const resultPromise = harness.executeTool("scout", { prompt: "Keep investigating." }) as Promise<{
+				details: { artifactId: string; artifactPath: string; status: string };
+			}>;
+			await promptStarted;
+			await vi.advanceTimersByTimeAsync(3 * 60 * 1000);
+			const result = await resultPromise;
+			const serialized = await readFile(join(cwd, result.details.artifactPath), "utf8");
+			const artifact = JSON.parse(serialized) as { output: { status: string; error?: string } };
+
+			expect(result.details.status).toBe("timed_out");
+			expect(artifact.output).toEqual({ status: "timed_out", error: "Scout exceeded its 3-minute limit" });
+			expect(abort).toHaveBeenCalledOnce();
+		} finally {
+			vi.useRealTimers();
+			await rm(cwd, { recursive: true, force: true });
+		}
+	});
+
 	it("animates the plan status while the agent is drafting", async () => {
 		vi.useFakeTimers();
 		try {

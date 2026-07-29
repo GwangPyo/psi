@@ -374,7 +374,8 @@ Content`,
 			const loader = new DefaultResourceLoader({ cwd, agentDir });
 			await loader.reload();
 
-			expect(loader.getSystemPrompt()).toBe("You are a helpful assistant.");
+			expect(loader.getSystemPrompt("spawn")).toBe("You are a helpful assistant.");
+			expect(loader.getSystemPrompt("main")).toBeUndefined();
 		});
 
 		it("should skip project resources that require trust when project is not trusted", async () => {
@@ -411,7 +412,8 @@ Project skill content`,
 			const loader = new DefaultResourceLoader({ cwd, agentDir, settingsManager });
 			await loader.reload();
 
-			expect(loader.getSystemPrompt()).toBe("Global system prompt.");
+			expect(loader.getSystemPrompt("spawn")).toBe("Global system prompt.");
+			expect(loader.getSystemPrompt("main")).toBeUndefined();
 			expect(loader.getAgentsFiles().agentsFiles.some((file) => file.path === join(agentDir, "AGENTS.md"))).toBe(
 				true,
 			);
@@ -618,7 +620,8 @@ Content`,
 			});
 			await loader.reload();
 
-			expect(loader.getSystemPrompt()).toBe("Custom system prompt");
+			expect(loader.getSystemPrompt("spawn")).toBe("Custom system prompt");
+			expect(loader.getSystemPrompt("main")).toBeUndefined();
 		});
 	});
 

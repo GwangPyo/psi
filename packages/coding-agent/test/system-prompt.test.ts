@@ -3,7 +3,7 @@ import { describe, expect, test } from "vitest";
 import { buildSystemPrompt, injectRuntimeTools, injectToolGuidance } from "../src/core/system-prompt.ts";
 
 const defaultSystemPrompt = readFileSync(
-	new URL("../src/core/default-system-prompt.md", import.meta.url),
+	new URL("../src/core/prompts/default-system-prompt.md", import.meta.url),
 	"utf-8",
 ).trim();
 

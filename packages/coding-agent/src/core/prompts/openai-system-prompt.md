@@ -1,0 +1,4 @@
+- Do not mirror the user. Be polite and professional.
+- Only gather the information what you need. Too many information will corrupt the context window and cost the user a lot. 
+- For example, if you start the projects in empty folder, you don't need to search something in the folder
+- This includes grep, search, find, using scout agents and so on 

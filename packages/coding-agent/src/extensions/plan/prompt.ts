@@ -2,8 +2,9 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { getPackageDir } from "../../config.ts";
 
-const PLAN_SYSTEM_PROMPT_FILENAME = "system-prompt.md";
-const EXECUTION_SYSTEM_PROMPT_FILENAME = "execution-system-prompt.md";
+const PLAN_SYSTEM_PROMPT_FILENAME = "prompts/system-prompt.md";
+const EXECUTION_SYSTEM_PROMPT_FILENAME = "prompts/execution-system-prompt.md";
+const SCOUT_PROMPT_FILENAME = "prompts/scout-prompt.md";
 
 function loadSystemPromptTemplate(filename: string): string {
 	const packageDir = getPackageDir();
@@ -21,6 +22,7 @@ function loadSystemPromptTemplate(filename: string): string {
 
 const PLAN_SYSTEM_PROMPT_TEMPLATE = loadSystemPromptTemplate(PLAN_SYSTEM_PROMPT_FILENAME);
 const EXECUTION_SYSTEM_PROMPT_TEMPLATE = loadSystemPromptTemplate(EXECUTION_SYSTEM_PROMPT_FILENAME);
+const SCOUT_PROMPT_TEMPLATE = loadSystemPromptTemplate(SCOUT_PROMPT_FILENAME);
 
 export interface BuildPlanSystemPromptOptions {
 	guideToolName: string;
@@ -55,4 +57,10 @@ export function buildExecutionSystemPrompt(options: BuildExecutionSystemPromptOp
 		.replaceAll("{{PLAN_RUNTIME}}", options.runtime)
 		.replaceAll("{{ACTIVE_STATE_INSTRUCTIONS}}", options.activeStateInstructions)
 		.replaceAll("{{ENABLED_TRANSITIONS}}", options.enabledTransitions);
+}
+
+export function buildScoutSystemPrompt(prompt: string, artifactId: string, finishToolName: string): string {
+	return SCOUT_PROMPT_TEMPLATE.replaceAll("{{PROMPT}}", prompt)
+		.replaceAll("{{ARTIFACT_ID}}", artifactId)
+		.replaceAll("{{FINISH_TOOL}}", finishToolName);
 }

@@ -1559,6 +1559,7 @@ export type RefreshToolsHandler = () => void;
 
 export interface SpawnAgentOptions {
 	model: Model<any>;
+	/** Role-specific instructions appended to the spawned agent's custom base, or the default fallback. */
 	systemPrompt: string;
 	thinkingLevel?: ThinkingLevel;
 	toolNames?: string[];

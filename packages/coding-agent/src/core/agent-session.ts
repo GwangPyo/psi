@@ -288,6 +288,11 @@ interface ToolDefinitionEntry {
 	sourceInfo: SourceInfo;
 }
 
+interface SpawnedAgentRecord {
+	agent: Agent;
+	running: boolean;
+}
+
 function estimateMessagesTokens(messages: AgentMessage[]): number {
 	let tokens = 0;
 	for (const message of messages) {
@@ -314,7 +319,7 @@ export class AgentSession {
 	public backgroundEmotionDaemon: BackgroundEmotionDaemon;
 
 	private _scopedModels: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel }>;
-	private _spawnedAgents = new Set<{ agent: Agent; running: boolean }>();
+	private _spawnedAgents = new Set<SpawnedAgentRecord>();
 
 	// Event subscription state
 	private _unsubscribeAgent?: () => void;
@@ -852,6 +857,7 @@ export class AgentSession {
 			this.abortCompaction();
 			this.abortBranchSummary();
 			this.abortBash();
+			this._abortRunningSpawnedAgents();
 			this.agent.abort();
 		} catch {
 			// Dispose must succeed even if an abort hook throws.
@@ -891,6 +897,11 @@ export class AgentSession {
 	/** Whether the session is currently processing an agent run or post-run continuation. */
 	get isStreaming(): boolean {
 		return this._isAgentRunActive;
+	}
+
+	/** Whether an isolated agent spawned from this session is currently processing a prompt. */
+	get hasRunningSpawnedAgents(): boolean {
+		return [...this._spawnedAgents].some((record) => record.running);
 	}
 
 	/** Whether the session has no active agent run, retry, auto-compaction, or queued continuation. */
@@ -941,12 +952,18 @@ export class AgentSession {
 	 * implementations, but owns a separate transcript and system prompt.
 	 */
 	spawnAgent(options: SpawnAgentOptions): SpawnedAgent {
-		const tools = (options.toolNames ?? this.getActiveToolNames())
+		const toolNames = options.toolNames ?? this.getActiveToolNames();
+		const tools = toolNames
 			.map((name) => this._toolRegistry.get(name))
 			.filter((tool): tool is AgentTool => tool !== undefined);
 		const agent = new Agent({
 			initialState: {
-				systemPrompt: options.systemPrompt,
+				systemPrompt: this._buildSystemPrompt({
+					target: "spawn",
+					toolNames,
+					model: options.model,
+					appendSystemPrompt: options.systemPrompt,
+				}),
 				model: options.model,
 				thinkingLevel: clampThinkingLevel(
 					options.model,
@@ -1256,24 +1273,41 @@ Inspect only that tool's definition, schema, and guidance. Call it exactly once.
 	}
 
 	private _rebuildSystemPrompt(toolNames: string[]): string {
-		const validToolNames = toolNames.filter((name) => this._toolRegistry.has(name));
-		const loaderSystemPrompt = this._resourceLoader.getSystemPrompt();
+		return this._buildSystemPrompt({
+			target: "main",
+			toolNames,
+			model: this.model,
+		});
+	}
+
+	private _buildSystemPrompt(options: {
+		target: "main" | "spawn";
+		toolNames: string[];
+		model: Model<any> | undefined;
+		appendSystemPrompt?: string;
+	}): string {
+		const validToolNames = options.toolNames.filter((name) => this._toolRegistry.has(name));
 		const loaderAppendSystemPrompt = this._resourceLoader.getAppendSystemPrompt();
-		const appendSystemPrompt =
-			loaderAppendSystemPrompt.length > 0 ? loaderAppendSystemPrompt.join("\n\n") : undefined;
+		const appendSystemPrompt = [...loaderAppendSystemPrompt, options.appendSystemPrompt]
+			.filter((prompt): prompt is string => prompt !== undefined && prompt !== "")
+			.join("\n\n");
 		const loadedSkills = this._resourceLoader.getSkills().skills;
 		const loadedContextFiles = this._resourceLoader.getAgentsFiles().agentsFiles;
 
-		this._baseSystemPromptOptions = {
+		const buildOptions: BuildSystemPromptOptions = {
 			cwd: this._cwd,
+			providerId: options.model?.provider,
 			skills: loadedSkills,
 			contextFiles: loadedContextFiles,
-			customPrompt: loaderSystemPrompt,
-			appendSystemPrompt,
+			customPrompt: this._resourceLoader.getSystemPrompt(options.target),
+			appendSystemPrompt: appendSystemPrompt || undefined,
 			selectedTools: validToolNames,
 		};
+		if (options.target === "main") {
+			this._baseSystemPromptOptions = buildOptions;
+		}
 		return injectRuntimeTools(
-			buildSystemPrompt(this._baseSystemPromptOptions),
+			buildSystemPrompt(buildOptions),
 			this._runtimeToolPrompts(validToolNames),
 			Array.from(this._toolPromptGuidelines.values()).flat(),
 		);
@@ -1818,13 +1852,24 @@ Inspect only that tool's definition, schema, and guidance. Call it exactly once.
 		return this._resourceLoader;
 	}
 
+	private _abortRunningSpawnedAgents(): Agent[] {
+		const runningAgents: Agent[] = [];
+		for (const record of this._spawnedAgents) {
+			if (!record.running) continue;
+			runningAgents.push(record.agent);
+			record.agent.abort();
+		}
+		return runningAgents;
+	}
+
 	/**
-	 * Abort current operation and wait for agent to become idle.
+	 * Abort the current operation and all active isolated agents, then wait for them to settle.
 	 */
 	async abort(): Promise<void> {
 		this.abortRetry();
+		const runningSpawnedAgents = this._abortRunningSpawnedAgents();
 		this.agent.abort();
-		await this.waitForIdle();
+		await Promise.all([this.waitForIdle(), ...runningSpawnedAgents.map((agent) => agent.waitForIdle())]);
 	}
 
 	async waitForIdle(): Promise<void> {
@@ -1844,6 +1889,10 @@ Inspect only that tool's definition, schema, and guidance. Call it exactly once.
 		source: "set" | "cycle" | "restore",
 	): Promise<void> {
 		if (modelsAreEqual(previousModel, nextModel)) return;
+
+		this._baseSystemPrompt = this._rebuildSystemPrompt(this.getActiveToolNames());
+		this.agent.state.systemPrompt = this._systemPromptOverride ?? this._baseSystemPrompt;
+
 		await this._extensionRunner.emit({
 			type: "model_select",
 			model: nextModel,

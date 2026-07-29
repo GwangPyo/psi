@@ -5,7 +5,8 @@
  * persisted machine through explicit, structured transition tool calls.
  */
 
-import { readFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { type Component, HBox, Key, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
@@ -33,7 +34,7 @@ import {
 	type PlanGuideDraft,
 	preparePlanGuideArguments,
 } from "./guide.ts";
-import { buildExecutionSystemPrompt, buildPlanSystemPrompt } from "./prompt.ts";
+import { buildExecutionSystemPrompt, buildPlanSystemPrompt, buildScoutSystemPrompt } from "./prompt.ts";
 import { PlanGraphComponent } from "./tui-graph.ts";
 import { isSafeCommand } from "./utils.ts";
 
@@ -42,7 +43,11 @@ const PLAN_GRILL_TOOL = "plan_grill";
 const TRANSITION_PLAN_TOOL = "plan_transition";
 const PLAN_DRAFTING_WIDGET = "plan-drafting";
 const SCOUT_TOOL = "scout";
-const PLAN_MODE_TOOLS = [SCOUT_TOOL, PLAN_GRILL_TOOL, GUIDE_PLAN_TOOL];
+const SCOUT_RESULT_TOOL = "read_scout_result";
+const SCOUT_FINISH_TOOL = "finish_scout";
+const SCOUT_ARTIFACT_DIRECTORY = ".pi/scout-results";
+const SCOUT_TIMEOUT_MS = 3 * 60 * 1000;
+const PLAN_MODE_TOOLS = [SCOUT_TOOL, SCOUT_RESULT_TOOL, PLAN_GRILL_TOOL, GUIDE_PLAN_TOOL];
 const NORMAL_MODE_TOOLS = ["read", "bash", "edit", "write", "grep", "find", "ls"];
 const PLAN_MODE_DISABLED_TOOLS = new Set<string>([
 	"edit",
@@ -98,6 +103,42 @@ interface PlanModeState {
 	toolsBeforePlanMode?: string[];
 }
 
+interface ScoutArtifact {
+	version: 1;
+	artifactId: string;
+	createdAt: string;
+	model: string;
+	input: {
+		prompt: string;
+	};
+	output: {
+		status: "running" | "completed" | "timed_out" | "cancelled" | "failed";
+		text?: string;
+		error?: string;
+	};
+}
+
+class ScoutTimedOutError extends Error {
+	constructor() {
+		super("Scout exceeded its 3-minute limit");
+	}
+}
+
+class ScoutCancelledError extends Error {
+	constructor() {
+		super("Scout cancelled");
+	}
+}
+
+function scoutArtifactPath(cwd: string, artifactId: string): string {
+	return resolve(cwd, SCOUT_ARTIFACT_DIRECTORY, `${artifactId}.json`);
+}
+
+async function writeScoutArtifact(cwd: string, artifact: ScoutArtifact): Promise<void> {
+	await mkdir(resolve(cwd, SCOUT_ARTIFACT_DIRECTORY), { recursive: true });
+	await writeFile(scoutArtifactPath(cwd, artifact.artifactId), `${JSON.stringify(artifact, null, 2)}\n`, "utf8");
+}
+
 function uniqueToolNames(toolNames: string[]): string[] {
 	return [...new Set(toolNames)];
 }
@@ -137,6 +178,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 	let backgroundSummaries: string[] = [];
 	let backgroundAgent: ReturnType<typeof pi.spawnAgent> | undefined;
 	let isBackgroundSummarizing = false;
+	const activeScoutArtifacts = new Map<string, ScoutArtifact>();
 
 	function initBackgroundAgent(ctx: ExtensionContext) {
 		if (backgroundAgent) return;
@@ -152,7 +194,8 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 
 		backgroundAgent = pi.spawnAgent({
 			model: bgModel,
-			systemPrompt: `${ctx.getSystemPrompt()}\n\nYou are a background agent in Plan Mode. Your task is to use grep and read tools to investigate the codebase alongside the Main Agent's progress and provide brief, incremental summaries of structural findings. Maintain your context between requests. Do NOT propose plans. Just summarize the current codebase state.`,
+			systemPrompt:
+				"You are a background agent in Plan Mode. Your task is to use grep and read tools to investigate the codebase alongside the Main Agent's progress and provide brief, incremental summaries of structural findings. Maintain your context between requests. Do NOT propose plans. Just summarize the current codebase state.",
 			toolNames: ["bash", "grep", "read", "find", "ls"],
 		});
 	}
@@ -282,11 +325,12 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		private hbox: HBox;
 		private leftText: Text;
 		private rightText: Text;
+		private cachedHeight = 15;
 
 		constructor() {
 			this.leftText = new Text("", 1, 0);
 			this.rightText = new Text("", 1, 0);
-			this.hbox = new HBox(this.leftText, this.rightText, 0.4, 4);
+			this.hbox = new HBox(this.leftText, this.rightText, 0.5, 4);
 		}
 
 		update(left: string, right: string) {
@@ -296,7 +340,12 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		}
 
 		render(width: number): string[] {
-			return this.hbox.render(width);
+			const lines = this.hbox.render(width);
+			this.cachedHeight = Math.max(this.cachedHeight, lines.length);
+			while (lines.length < this.cachedHeight) {
+				lines.push("");
+			}
+			return lines;
 		}
 
 		invalidate(): void {
@@ -442,6 +491,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 
 	function clearPlan(): void {
 		stopDraftingStatus();
+		planLayoutWidget = undefined;
 		machineDefinition = undefined;
 		runtimeSnapshot = undefined;
 		planGuideDraft = createPlanGuideDraft();
@@ -719,62 +769,29 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.registerTool({
-		name: "write_report",
-		label: "Write Report",
-		description: "Write the content to the scout report file (.pi/scout-report.md).",
+		name: SCOUT_FINISH_TOOL,
+		label: "Finish Scout",
+		description: "Finish an active scout early and persist its findings in the scout JSON artifact.",
 		parameters: Type.Object({
-			content: Type.String({ description: "Content to write" }),
+			artifactId: Type.String({
+				pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+				description: "Artifact ID supplied in the scout system prompt",
+			}),
+			summary: Type.String({ minLength: 1, description: "Concise evidence-backed findings for the main agent" }),
 		}),
-		async execute(_id, params, _sig, _onUpdate, ctx) {
-			const { writeFile } = await import("node:fs/promises");
-			const { dirname, resolve } = await import("node:path");
-			const { existsSync, mkdirSync } = await import("node:fs");
-			const fullPath = resolve(ctx.cwd, ".pi/scout-report.md");
-			const dir = dirname(fullPath);
-			if (!existsSync(dir)) {
-				mkdirSync(dir, { recursive: true });
+		executionMode: "sequential",
+		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+			const artifact = activeScoutArtifacts.get(params.artifactId);
+			if (!artifact || artifact.output.status !== "running") {
+				throw new Error(`No running scout exists for artifact ${params.artifactId}.`);
 			}
-			await writeFile(fullPath, params.content, "utf-8");
-			return { content: [{ type: "text", text: `Successfully wrote report.` }], details: null };
-		},
-	});
-
-	pi.registerTool({
-		name: "edit_report",
-		label: "Edit Report",
-		description: "Edit the existing scout report file (.pi/scout-report.md) using exact text replacement.",
-		parameters: Type.Object({
-			edits: Type.Array(
-				Type.Object({
-					oldText: Type.String({ description: "Exact text to replace" }),
-					newText: Type.String({ description: "Replacement text" }),
-				}),
-				{ description: "Array of replacements" },
-			),
-		}),
-		async execute(_id, params, _sig, _onUpdate, ctx) {
-			const { readFile, writeFile } = await import("node:fs/promises");
-			const { resolve } = await import("node:path");
-			const fullPath = resolve(ctx.cwd, ".pi/scout-report.md");
-			let content = await readFile(fullPath, "utf-8");
-			for (const edit of params.edits) {
-				if (!content.includes(edit.oldText)) {
-					throw new Error(`oldText not found in file: ${edit.oldText}`);
-				}
-				content = content.replace(edit.oldText, edit.newText);
-			}
-			await writeFile(fullPath, content, "utf-8");
-			return { content: [{ type: "text", text: `Successfully edited report.` }], details: null };
-		},
-	});
-
-	pi.registerTool({
-		name: "finish_report",
-		label: "Finish Report",
-		description: "Mark the report as finished. Call this when you are completely done writing the report.",
-		parameters: Type.Object({}),
-		async execute() {
-			throw new Error("SCOUT_FINISHED_REPORT");
+			artifact.output = { status: "completed", text: params.summary };
+			await writeScoutArtifact(ctx.cwd, artifact);
+			return {
+				content: [{ type: "text", text: "Scout findings saved. Ending scout." }],
+				details: { artifactId: artifact.artifactId },
+				terminate: true,
+			};
 		},
 	});
 
@@ -782,20 +799,21 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		name: SCOUT_TOOL,
 		label: "Scout Information",
 		description:
-			"Use this tool to launch a lightweight background scout agent that will gather information from the codebase using read tools (bash, grep, find, ls, read).",
+			"Launch a lightweight scout to investigate the codebase. The request and result are saved as a JSON artifact that must be read with read_scout_result.",
 		promptSnippet: "Use the scout tool to gather information instead of reading directly",
 		promptGuidelines: [
 			"Since you do not have read tools during planning, call the scout tool when you need information about the codebase.",
 			"Provide a clear research prompt to the scout, detailing exactly what you want it to look for.",
+			"After scout returns an artifact ID, call read_scout_result and use the JSON content as the evidence for your plan.",
 		],
 		parameters: Type.Object({
 			prompt: Type.String({ description: "Instructions for the scout agent on what to investigate." }),
 		}),
 		executionMode: "parallel",
-		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
 			const scoutModelReference = SettingsManager.create(ctx.cwd, getAgentDir(), {
 				projectTrusted: ctx.isProjectTrusted ? ctx.isProjectTrusted() : true,
-			}).getSubagentDefaultModel();
+			}).getBackgroundAgentDefaultModel();
 			let scoutModel = ctx.model;
 			if (scoutModelReference) {
 				const [provider, id] = scoutModelReference.split("/");
@@ -805,31 +823,105 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 				throw new Error("No model available for the scout agent.");
 			}
 			ctx.ui.notify("Scout agent is gathering information...", "info");
-			const allMessages = ctx.sessionManager.buildSessionContext().messages;
-			const recentContext = allMessages.slice(-20);
-			const contextString = JSON.stringify(recentContext, null, 2);
-			const scout = pi.spawnAgent({
-				model: scoutModel,
-				systemPrompt: `${ctx.getSystemPrompt()}\n\n[Main Agent Context (Last 20 Turns)]\n${contextString}\n\nYou are the Scout Agent. Your task is to investigate the codebase and gather all necessary information for the user's research prompt: ${params.prompt}\n\nYou must use read tools (bash, grep, find, ls, read) to investigate.\n\nYou MUST write your findings into a comprehensive research report using the 'write_report' and 'edit_report' tools. When you are completely done writing the report, you MUST call the 'finish_report' tool. This will automatically end your turn and deliver the report. Do NOT output the report text in your message.`,
-				toolNames: ["read", "bash", "grep", "find", "ls", "write_report", "edit_report", "finish_report"],
-			});
+			const artifactId = randomUUID();
+			const artifact: ScoutArtifact = {
+				version: 1,
+				artifactId,
+				createdAt: new Date().toISOString(),
+				model: `${scoutModel.provider}/${scoutModel.id}`,
+				input: { prompt: params.prompt },
+				output: { status: "running" },
+			};
+			activeScoutArtifacts.set(artifactId, artifact);
+			await writeScoutArtifact(ctx.cwd, artifact);
+			let scout: ReturnType<typeof pi.spawnAgent> | undefined;
+			let timeout: ReturnType<typeof setTimeout> | undefined;
+			let removeAbortListener: (() => void) | undefined;
 			try {
-				try {
-					await scout.prompt(params.prompt);
-				} catch (error) {
-					if (!(error instanceof Error) || error.message !== "SCOUT_FINISHED_REPORT") throw error;
+				scout = pi.spawnAgent({
+					model: scoutModel,
+					systemPrompt: buildScoutSystemPrompt(params.prompt, artifactId, SCOUT_FINISH_TOOL),
+					toolNames: ["read", "bash", "grep", "find", "ls", SCOUT_FINISH_TOOL],
+				});
+				const timedOut = new Promise<never>((_resolve, reject) => {
+					timeout = setTimeout(() => reject(new ScoutTimedOutError()), SCOUT_TIMEOUT_MS);
+				});
+				const cancelled = new Promise<never>((_resolve, reject) => {
+					if (!signal) return;
+					const cancel = () => reject(new ScoutCancelledError());
+					if (signal.aborted) {
+						cancel();
+						return;
+					}
+					signal.addEventListener("abort", cancel, { once: true });
+					removeAbortListener = () => signal.removeEventListener("abort", cancel);
+				});
+				const text = await Promise.race([scout.prompt(params.prompt), timedOut, cancelled]);
+				if (artifact.output.status === "running") {
+					artifact.output = { status: "completed", text };
 				}
-				let reportContent = "Report file not found.";
-				try {
-					reportContent = await readFile(resolve(ctx.cwd, ".pi/scout-report.md"), "utf-8");
-				} catch {}
-				return {
-					content: [{ type: "text", text: `Scout Report (.pi/scout-report.md):\n${reportContent}` }],
-					details: null,
-				};
+			} catch (error) {
+				if (artifact.output.status === "completed") {
+					// finish_scout persisted the summary and terminated the child agent.
+				} else if (error instanceof ScoutTimedOutError) {
+					artifact.output = { status: "timed_out", error: error.message };
+					void scout?.abort();
+				} else if (error instanceof ScoutCancelledError || signal?.aborted) {
+					artifact.output = { status: "cancelled", error: "Scout cancelled" };
+					void scout?.abort();
+				} else {
+					artifact.output = {
+						status: "failed",
+						error: error instanceof Error ? error.message : String(error),
+					};
+				}
 			} finally {
-				scout.dispose();
+				if (timeout) clearTimeout(timeout);
+				removeAbortListener?.();
+				scout?.dispose();
+				await writeScoutArtifact(ctx.cwd, artifact);
+				activeScoutArtifacts.delete(artifactId);
 			}
+			const artifactPath = `${SCOUT_ARTIFACT_DIRECTORY}/${artifactId}.json`;
+			const status = artifact.output.status === "completed" ? "completed" : artifact.output.status;
+			ctx.ui.notify(
+				`Scout ${status}; result saved to ${artifactPath}.`,
+				status === "completed" ? "info" : "warning",
+			);
+			return {
+				content: [
+					{
+						type: "text",
+						text: `Scout ${status}. Call ${SCOUT_RESULT_TOOL} with artifactId "${artifactId}" to read ${artifactPath}.`,
+					},
+				],
+				details: { artifactId, artifactPath, status },
+			};
+		},
+	});
+
+	pi.registerTool({
+		name: SCOUT_RESULT_TOOL,
+		label: "Read Scout Result",
+		description: "Read one JSON artifact written by the scout tool.",
+		promptSnippet: "Read a completed scout JSON artifact before using its findings",
+		parameters: Type.Object({
+			artifactId: Type.String({
+				pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+				description: "Artifact ID returned by scout",
+			}),
+		}),
+		executionMode: "sequential",
+		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+			const artifactPath = scoutArtifactPath(ctx.cwd, params.artifactId);
+			const content = await readFile(artifactPath, "utf8");
+			return {
+				content: [{ type: "text", text: content }],
+				details: {
+					artifactId: params.artifactId,
+					artifactPath: `${SCOUT_ARTIFACT_DIRECTORY}/${params.artifactId}.json`,
+				},
+			};
 		},
 	});
 

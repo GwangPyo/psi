@@ -43,6 +43,71 @@ function assistant(content: AssistantMessage["content"], stopReason: "stop" | "t
 }
 
 describe("AgentSession.spawnAgent", () => {
+	it("aborts active spawned agents when the session is cancelled", async () => {
+		const model = getModel("anthropic", "claude-sonnet-4-5")!;
+		let resolveChildStarted!: () => void;
+		const childStarted = new Promise<void>((resolve) => {
+			resolveChildStarted = resolve;
+		});
+		let childAborted = false;
+		let childSystemPrompt = "";
+		const parentAgent = new Agent({
+			initialState: { model, systemPrompt: "parent prompt", tools: [], thinkingLevel: "high" },
+			streamFn: (_model, context, options) => {
+				const stream = new MockAssistantStream();
+				queueMicrotask(() => {
+					const message = assistant([], "stop");
+					stream.push({ type: "start", partial: message });
+					if (context.systemPrompt?.includes("waiting child prompt")) {
+						childSystemPrompt = context.systemPrompt;
+						resolveChildStarted();
+						options?.signal?.addEventListener(
+							"abort",
+							() => {
+								childAborted = true;
+								stream.push({ type: "error", reason: "aborted", error: message });
+							},
+							{ once: true },
+						);
+						return;
+					}
+					stream.push({ type: "done", reason: "stop", message });
+				});
+				return stream;
+			},
+		});
+		const authStorage = AuthStorage.inMemory();
+		const session = new AgentSession({
+			agent: parentAgent,
+			sessionManager: SessionManager.inMemory(),
+			settingsManager: SettingsManager.inMemory(),
+			cwd: process.cwd(),
+			modelRuntime: getModelRuntime(await createInMemoryModelRegistry(authStorage)),
+			resourceLoader: createTestResourceLoader(),
+		});
+		const spawned = session.spawnAgent({
+			model,
+			systemPrompt: "waiting child prompt",
+		});
+
+		try {
+			const prompt = spawned.prompt("Work until cancelled");
+			await childStarted;
+			expect(childSystemPrompt).toContain("Ponytail");
+			expect(childSystemPrompt).toContain("waiting child prompt");
+			expect(session.hasRunningSpawnedAgents).toBe(true);
+
+			await session.abort();
+
+			expect(childAborted).toBe(true);
+			await expect(prompt).rejects.toThrow("Spawned agent returned no text");
+			expect(session.hasRunningSpawnedAgents).toBe(false);
+		} finally {
+			spawned.dispose();
+			session.dispose();
+		}
+	});
+
 	it("reuses registered tools in-process with an isolated transcript and system prompt", async () => {
 		const model = getModel("anthropic", "claude-sonnet-4-5")!;
 		const execute = vi.fn(async () => ({
@@ -79,13 +144,18 @@ describe("AgentSession.spawnAgent", () => {
 			},
 		});
 		const authStorage = AuthStorage.inMemory();
+		const resourceLoader = {
+			...createTestResourceLoader(),
+			getSystemPrompt: (target: "main" | "spawn") => (target === "spawn" ? "spawn custom prompt" : undefined),
+			getAppendSystemPrompt: () => ["shared appended instructions"],
+		};
 		const session = new AgentSession({
 			agent: parentAgent,
 			sessionManager: SessionManager.inMemory(),
 			settingsManager: SettingsManager.inMemory(),
 			cwd: process.cwd(),
 			modelRuntime: getModelRuntime(await createInMemoryModelRegistry(authStorage)),
-			resourceLoader: createTestResourceLoader(),
+			resourceLoader,
 			customTools: [
 				{
 					name: "inspect",
@@ -109,9 +179,18 @@ describe("AgentSession.spawnAgent", () => {
 		});
 
 		try {
+			expect(session.systemPrompt).toContain("Ponytail");
+			expect(session.systemPrompt).toContain("shared appended instructions");
+			expect(session.systemPrompt).not.toContain("spawn custom prompt");
 			expect(await spawned.prompt("Prepare a brief")).toBe("brief complete");
 			expect(execute).toHaveBeenCalledTimes(1);
-			expect(seenSystemPrompts).toEqual(["isolated child prompt", "isolated child prompt"]);
+			expect(seenSystemPrompts).toHaveLength(2);
+			for (const systemPrompt of seenSystemPrompts) {
+				expect(systemPrompt).toContain("spawn custom prompt");
+				expect(systemPrompt).toContain("shared appended instructions");
+				expect(systemPrompt).toContain("isolated child prompt");
+				expect(systemPrompt).not.toContain("Ponytail");
+			}
 			expect(events).toContain("tool_execution_start");
 			expect(parentAgent.state.messages).toHaveLength(0);
 			await spawned.appendUserMessage("direct user correction");

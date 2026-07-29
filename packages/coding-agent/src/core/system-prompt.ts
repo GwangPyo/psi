@@ -5,7 +5,18 @@
 import { readFileSync } from "node:fs";
 import { formatSkillsForPrompt, type Skill } from "./skills.ts";
 
-const DEFAULT_SYSTEM_PROMPT = readFileSync(new URL("./default-system-prompt.md", import.meta.url), "utf-8").trim();
+const DEFAULT_SYSTEM_PROMPT = readFileSync(
+	new URL("./prompts/default-system-prompt.md", import.meta.url),
+	"utf-8",
+).trim();
+const OPENAI_SYSTEM_PROMPT = readFileSync(
+	new URL("./prompts/openai-system-prompt.md", import.meta.url),
+	"utf-8",
+).trim();
+const GOOGLE_SYSTEM_PROMPT = readFileSync(
+	new URL("./prompts/google-system-prompt.md", import.meta.url),
+	"utf-8",
+).trim();
 
 export interface RuntimeToolPrompt {
 	name: string;
@@ -54,6 +65,8 @@ export function injectToolGuidance(basePrompt: string, toolName: string, guideli
 export interface BuildSystemPromptOptions {
 	/** Custom system prompt (replaces default). */
 	customPrompt?: string;
+	/** Provider type / ID (e.g., openai, google). */
+	providerId?: string;
 	/** Active tool names used while constructing tool-dependent static context. */
 	selectedTools?: string[];
 	/** Text to append to system prompt. */
@@ -82,48 +95,21 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 	const promptCwd = cwd.replace(/\\/g, "/");
 
 	const appendSection = appendSystemPrompt ? `\n\n${appendSystemPrompt}` : "";
-
 	const contextFiles = providedContextFiles ?? [];
 	const skills = providedSkills ?? [];
 
-	if (customPrompt) {
-		let prompt = customPrompt;
+	let prompt = customPrompt || DEFAULT_SYSTEM_PROMPT;
 
-		if (appendSection) {
-			prompt += appendSection;
-		}
-
-		// Append project context files
-		if (contextFiles.length > 0) {
-			prompt += "\n\n<project_context>\n\n";
-			prompt += "Project-specific instructions and guidelines:\n\n";
-			for (const { path: filePath, content } of contextFiles) {
-				prompt += `<project_instructions path="${filePath}">\n${content}\n</project_instructions>\n\n`;
-			}
-			prompt += "</project_context>\n";
-		}
-
-		// Append skills section (only if read tool is available)
-		const customPromptHasRead = !selectedTools || selectedTools.includes("read");
-		if (customPromptHasRead && skills.length > 0) {
-			prompt += formatSkillsForPrompt(skills);
-		}
-
-		prompt += `\nCurrent working directory: ${promptCwd}`;
-
-		return prompt;
+	if (options.providerId === "openai") {
+		prompt += `\n\n${OPENAI_SYSTEM_PROMPT}`;
+	} else if (options.providerId === "google") {
+		prompt += `\n\n${GOOGLE_SYSTEM_PROMPT}`;
 	}
-
-	const tools = selectedTools || ["read", "bash", "edit", "write"];
-	const hasRead = tools.includes("read");
-
-	let prompt = DEFAULT_SYSTEM_PROMPT;
 
 	if (appendSection) {
 		prompt += appendSection;
 	}
 
-	// Append project context files
 	if (contextFiles.length > 0) {
 		prompt += "\n\n<project_context>\n\n";
 		prompt += "Project-specific instructions and guidelines:\n\n";
@@ -133,7 +119,8 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 		prompt += "</project_context>\n";
 	}
 
-	// Append skills section (only if read tool is available)
+	const tools = selectedTools || ["read", "bash", "edit", "write"];
+	const hasRead = tools.includes("read");
 	if (hasRead && skills.length > 0) {
 		prompt += formatSkillsForPrompt(skills);
 	}

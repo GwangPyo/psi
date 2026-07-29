@@ -176,7 +176,8 @@ export default function structuredWritingExtension(pi: ExtensionAPI): void {
 
 			const subagent = pi.spawnAgent({
 				model: subagentModel,
-				systemPrompt: `${ctx.getSystemPrompt()}\n\nYou are a subordinate coding agent. Your task is to implement the function requested by the main agent. Return ONLY the implemented code.`,
+				systemPrompt:
+					"You are a subordinate coding agent. Your task is to implement the function requested by the main agent. Return ONLY the implemented code.",
 				toolNames: ["read", "bash", "grep", "find", "ls"],
 			});
 

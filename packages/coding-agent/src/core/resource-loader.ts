@@ -42,7 +42,8 @@ export interface ResourceLoader {
 	getPrompts(): { prompts: PromptTemplate[]; diagnostics: ResourceDiagnostic[] };
 	getThemes(): { themes: Theme[]; diagnostics: ResourceDiagnostic[] };
 	getAgentsFiles(): { agentsFiles: Array<{ path: string; content: string }> };
-	getSystemPrompt(): string | undefined;
+	/** Resolve the configured custom base for an agent role. Main always uses the packaged default. */
+	getSystemPrompt(target: "main" | "spawn"): string | undefined;
 	getAppendSystemPrompt(): string[];
 	extendResources(paths: ResourceExtensionPaths): void;
 	reload(options?: ResourceLoaderReloadOptions): Promise<void>;
@@ -135,6 +136,7 @@ export interface DefaultResourceLoaderOptions {
 	noPromptTemplates?: boolean;
 	noThemes?: boolean;
 	noContextFiles?: boolean;
+	/** Optional custom base prompt for spawned agents. */
 	systemPrompt?: string;
 	appendSystemPrompt?: string[];
 	extensionsOverride?: (base: LoadExtensionsResult) => LoadExtensionsResult;
@@ -290,8 +292,8 @@ export class DefaultResourceLoader implements ResourceLoader {
 		return { agentsFiles: this.agentsFiles };
 	}
 
-	getSystemPrompt(): string | undefined {
-		return this.systemPrompt;
+	getSystemPrompt(target: "main" | "spawn"): string | undefined {
+		return target === "spawn" ? this.systemPrompt : undefined;
 	}
 
 	getAppendSystemPrompt(): string[] {

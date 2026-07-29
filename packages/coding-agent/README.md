@@ -330,7 +330,7 @@ Disable context file loading with `--no-context-files` (or `-nc`).
 
 ### System Prompt
 
-Replace the default system prompt with `.pi/SYSTEM.md` (project) or `~/.pi/agent/SYSTEM.md` (global). Append without replacing via `APPEND_SYSTEM.md`. The active tool catalog is computed from the tools enabled for each provider request. When a selected tool has tool-specific guidance, an isolated single-tool subagent receives that guidance, executes the tool, and returns the ordinary tool result to the main agent.
+The main agent always starts from the packaged default system prompt. `.pi/SYSTEM.md` (project), `~/.pi/agent/SYSTEM.md` (global), and `--system-prompt` define the optional custom base for spawned agents. Each spawned agent appends its role-specific prompt to that custom base; if none is configured, it appends to the packaged default instead. `APPEND_SYSTEM.md` appends to both. The active tool catalog is computed from the tools enabled for each provider request. When a selected tool has tool-specific guidance, an isolated single-tool subagent receives that guidance, executes the tool, and returns the ordinary tool result to the main agent.
 
 ---
 
@@ -604,7 +604,7 @@ Combine `--no-*` with explicit flags to load exactly what you need, ignoring set
 
 | Option | Description |
 |--------|-------------|
-| `--system-prompt <text>` | Replace default prompt (context files and skills still appended) |
+| `--system-prompt <text>` | Set the custom base prompt for spawned agents |
 | `--append-system-prompt <text>` | Append to system prompt |
 | `--verbose` | Force verbose startup |
 | `-a`, `--approve` | Trust project-local files for this run |

@@ -404,7 +404,9 @@ async function runSingleAgent(
 					wasAborted = true;
 					proc.kill("SIGTERM");
 					setTimeout(() => {
-						if (!proc.killed) proc.kill("SIGKILL");
+						if (proc.exitCode === null && proc.signalCode === null) {
+							proc.kill("SIGKILL");
+						}
 					}, 5000);
 				};
 				if (signal.aborted) killProc();
@@ -413,7 +415,11 @@ async function runSingleAgent(
 		});
 
 		currentResult.exitCode = exitCode;
-		if (wasAborted) throw new Error("Subagent was aborted");
+		if (wasAborted) {
+			currentResult.stopReason = "aborted";
+			currentResult.errorMessage = "Subagent was aborted";
+			currentResult.stderr = (currentResult.stderr + "\nSubagent was aborted").trim();
+		}
 		return currentResult;
 	} finally {
 		if (tmpPromptPath)
