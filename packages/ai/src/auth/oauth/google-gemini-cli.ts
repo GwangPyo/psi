@@ -52,14 +52,14 @@ let nodeApisPromise: Promise<NodeApis> | null = null;
 
 const decode = (value: string) => atob(value);
 const CLIENT_ID = decode(
-	"NjgxMjU1ODA5Mzk1LW9vOGZ0Mm9wcmRybnA5ZTNhcWY2YXYzaG1kaWIxMzVqLmFwcHMuZ29vZ2xldXNlcmNvbnRlbnQuY29t",
+	"MTA3MTAwNjA2MDU5MS10bWhzc2luMmgyMWxjcmUyMzV2dG9sb2poNGc0MDNlcC5hcHBzLmdvb2dsZXVzZXJjb250ZW50LmNvbQ==",
 );
-const CLIENT_SECRET = decode("R09DU1BYLTR1SGdNUG0tMW83U2stZ2VWNkN1NWNsWEZzeGw=");
+const CLIENT_SECRET = decode("R09DU1BYLUs1OEZXUjQ4NkxkTEoxbUxCOHNYQzR6NnFEQWY=");
 const AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
 const USER_INFO_URL = "https://www.googleapis.com/oauth2/v2/userinfo";
 const CODE_ASSIST_ENDPOINT = "https://daily-cloudcode-pa.googleapis.com";
-const MANUAL_REDIRECT_URI = "https://codeassist.google.com/authcode";
+const MANUAL_REDIRECT_URI = "http://localhost:51121/oauth-callback";
 const CALLBACK_PATH = "/oauth2callback";
 const REFRESH_SKEW_MS = 5 * 60 * 1000;
 const ONBOARD_TIMEOUT_MS = 5 * 60 * 1000;
@@ -74,6 +74,9 @@ const SCOPES = [
 	"https://www.googleapis.com/auth/cloud-platform",
 	"https://www.googleapis.com/auth/userinfo.email",
 	"https://www.googleapis.com/auth/userinfo.profile",
+	"https://www.googleapis.com/auth/aicode",
+	"https://www.googleapis.com/auth/cclog",
+	"https://www.googleapis.com/auth/experimentsandconfigs",
 ];
 
 async function getNodeApis(): Promise<NodeApis> {
@@ -218,6 +221,18 @@ function buildAuthorizationUrl(input: { challenge: string; redirectUri: string; 
 	url.searchParams.set("access_type", "offline");
 	url.searchParams.set("prompt", "consent");
 	return url.toString();
+}
+
+function authorizationCodeFromInput(input: string, expectedState: string): string {
+	const trimmed = input.trim();
+	try {
+		const redirect = new URL(trimmed);
+		if (redirect.searchParams.get("state") !== expectedState) throw new Error("OAuth state mismatch");
+		return redirect.searchParams.get("code") || "";
+	} catch (error) {
+		if (error instanceof Error && error.message === "OAuth state mismatch") throw error;
+		return trimmed;
+	}
 }
 
 async function readTokenResponse(response: Response, operation: "exchange" | "refresh"): Promise<GoogleTokenResponse> {
@@ -446,7 +461,7 @@ async function credentialFromToken(token: GoogleTokenResponse, interaction: Auth
 	};
 }
 
-/** Complete headless Google OAuth through Code Assist's hosted authorization-code callback. */
+/** Complete headless Google OAuth by accepting the failed loopback redirect URL from the remote browser. */
 async function loginWithManualCode(interaction: AuthInteraction): Promise<OAuthCredential> {
 	const { verifier, challenge } = await generatePKCE();
 	const state = createState();
@@ -454,23 +469,15 @@ async function loginWithManualCode(interaction: AuthInteraction): Promise<OAuthC
 	interaction.notify({
 		type: "auth_url",
 		url,
-		instructions: "Open this URL, approve access, then paste the authorization code.",
+		instructions:
+			"Open this URL and approve access. If the localhost page does not load, copy its full URL from the browser address bar.",
 	});
-	const input = (
-		await interaction.prompt({
-			type: "manual_code",
-			message: "Paste the Google authorization code or final redirect URL:",
-			signal: interaction.signal,
-		})
-	).trim();
-	let code = input;
-	try {
-		const redirect = new URL(input);
-		if (redirect.searchParams.get("state") !== state) throw new Error("OAuth state mismatch");
-		code = redirect.searchParams.get("code") || "";
-	} catch (error) {
-		if (error instanceof Error && error.message === "OAuth state mismatch") throw error;
-	}
+	const input = await interaction.prompt({
+		type: "manual_code",
+		message: "Paste the final localhost redirect URL or Google authorization code:",
+		signal: interaction.signal,
+	});
+	const code = authorizationCodeFromInput(input, state);
 	if (!code) throw new Error("Google authorization code is required");
 	return credentialFromToken(
 		await exchangeAuthorizationCode(code, verifier, MANUAL_REDIRECT_URI, interaction.signal),
@@ -513,12 +520,12 @@ async function loginWithBrowser(interaction: AuthInteraction): Promise<OAuthCred
 
 		const result = await callback.waitForCode();
 		if (manualError) throw manualError;
-		let code = result?.code || manualCode;
+		let code = result?.code || (manualCode ? authorizationCodeFromInput(manualCode, state) : undefined);
 		if (result?.code) manualAbort.abort();
 		if (!code) {
 			await manualPromise;
 			if (manualError) throw manualError;
-			code = manualCode;
+			code = manualCode ? authorizationCodeFromInput(manualCode, state) : undefined;
 		}
 		if (!code) throw new Error("Missing Google authorization code");
 		return credentialFromToken(
