@@ -60,7 +60,7 @@ const TOKEN_URL = "https://oauth2.googleapis.com/token";
 const USER_INFO_URL = "https://www.googleapis.com/oauth2/v2/userinfo";
 const CODE_ASSIST_ENDPOINT = "https://daily-cloudcode-pa.googleapis.com";
 const MANUAL_REDIRECT_URI = "http://localhost:51121/oauth-callback";
-const CALLBACK_PATH = "/oauth2callback";
+const CALLBACK_PATH = "/oauth-callback";
 const REFRESH_SKEW_MS = 5 * 60 * 1000;
 const ONBOARD_TIMEOUT_MS = 5 * 60 * 1000;
 const OAUTH_REQUEST_TIMEOUT_MS = 30_000;
@@ -74,7 +74,6 @@ const SCOPES = [
 	"https://www.googleapis.com/auth/cloud-platform",
 	"https://www.googleapis.com/auth/userinfo.email",
 	"https://www.googleapis.com/auth/userinfo.profile",
-	"https://www.googleapis.com/auth/aicode",
 	"https://www.googleapis.com/auth/cclog",
 	"https://www.googleapis.com/auth/experimentsandconfigs",
 ];
@@ -127,7 +126,7 @@ async function fetchWithTimeout(
 
 function callbackPort(): number {
 	const raw = getProviderEnvValue("OAUTH_CALLBACK_PORT");
-	if (!raw) return 0;
+	if (!raw) return 51121;
 	const port = Number.parseInt(raw, 10);
 	if (!Number.isInteger(port) || port <= 0 || port > 65535) {
 		throw new Error(`Invalid OAUTH_CALLBACK_PORT: ${raw}`);
@@ -201,7 +200,7 @@ async function startCallbackServer(expectedState: string): Promise<CallbackServe
 			}
 			resolve({
 				server,
-				redirectUri: `http://127.0.0.1:${address.port}${CALLBACK_PATH}`,
+				redirectUri: `http://localhost:${address.port}${CALLBACK_PATH}`,
 				cancelWait: () => settleWait?.(null),
 				waitForCode: () => waitForCodePromise,
 			});

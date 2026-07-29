@@ -73,11 +73,11 @@ describe("Google Antigravity OAuth", () => {
 		expect(authorizationUrl?.searchParams.get("redirect_uri")).toBe(MANUAL_REDIRECT_URI);
 		expect(authorizationUrl?.searchParams.get("scope")?.split(" ")).toEqual(
 			expect.arrayContaining([
-				"https://www.googleapis.com/auth/aicode",
 				"https://www.googleapis.com/auth/cclog",
 				"https://www.googleapis.com/auth/experimentsandconfigs",
 			]),
 		);
+		expect(authorizationUrl?.searchParams.get("scope")).not.toContain("https://www.googleapis.com/auth/aicode");
 		expect(credential).toEqual({
 			type: "oauth",
 			access: "access-token",
