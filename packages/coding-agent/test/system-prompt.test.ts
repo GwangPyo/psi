@@ -1,5 +1,11 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, test } from "vitest";
 import { buildSystemPrompt, injectRuntimeTools, injectToolGuidance } from "../src/core/system-prompt.ts";
+
+const defaultSystemPrompt = readFileSync(
+	new URL("../src/core/default-system-prompt.md", import.meta.url),
+	"utf-8",
+).trim();
 
 describe("buildSystemPrompt", () => {
 	describe("empty tools", () => {
@@ -18,29 +24,19 @@ describe("buildSystemPrompt", () => {
 			expect(prompt).toContain("(none)");
 		});
 
-		test("shows file paths guideline even with no tools", () => {
-			const prompt = buildSystemPrompt({
-				selectedTools: [],
-				contextFiles: [],
-				skills: [],
-				cwd: process.cwd(),
-			});
+		test("uses the packaged Markdown default even with no tools", () => {
+			const cwd = process.cwd();
+			const prompt = buildSystemPrompt({ selectedTools: [], contextFiles: [], skills: [], cwd });
 
-			expect(prompt).toContain("Show file paths clearly");
+			expect(prompt).toBe(`${defaultSystemPrompt}\nCurrent working directory: ${cwd.replace(/\\/g, "/")}`);
 		});
 	});
 
 	describe("default tools", () => {
-		test("includes minimal implementation discipline", () => {
-			const prompt = buildSystemPrompt({
-				contextFiles: [],
-				skills: [],
-				cwd: process.cwd(),
-			});
+		test("includes the Markdown default without embedding a second prompt", () => {
+			const prompt = buildSystemPrompt({ contextFiles: [], skills: [], cwd: process.cwd() });
 
-			expect(prompt).toContain("Use the first sufficient option");
-			expect(prompt).toContain("Fix root causes at the shared seam");
-			expect(prompt).toContain("Avoid speculative abstractions, dependencies, boilerplate, and files");
+			expect(prompt.startsWith(defaultSystemPrompt)).toBe(true);
 		});
 
 		test("includes all tools active for the current request", () => {
