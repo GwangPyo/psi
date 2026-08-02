@@ -110,15 +110,10 @@ export function parseStreamingJson<T = Record<string, unknown>>(partialJson: str
 		return parseJsonWithRepair<T>(partialJson);
 	} catch {
 		try {
-			const result = partialParse(partialJson);
+			const result = partialParse(repairJson(partialJson));
 			return (result ?? {}) as T;
 		} catch {
-			try {
-				const result = partialParse(repairJson(partialJson));
-				return (result ?? {}) as T;
-			} catch {
-				return {} as T;
-			}
+			return {} as T;
 		}
 	}
 }

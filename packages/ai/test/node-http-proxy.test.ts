@@ -54,6 +54,13 @@ describe("node HTTP proxy resolution", () => {
 		);
 	});
 
+	it("ignores invalid target URLs", () => {
+		resetProxyEnv();
+		process.env.HTTPS_PROXY = "http://proxy.example:8080";
+
+		expect(resolveHttpProxyUrlForTarget("not a URL")).toBeUndefined();
+	});
+
 	it("prefers scoped proxy env aliases before process env aliases", () => {
 		resetProxyEnv();
 		process.env.https_proxy = "http://process-proxy.example:8080";

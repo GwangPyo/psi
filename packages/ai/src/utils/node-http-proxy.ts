@@ -26,12 +26,7 @@ function parseProxyTargetUrl(targetUrl: string | URL): URL | undefined {
 	if (targetUrl instanceof URL) {
 		return targetUrl;
 	}
-
-	try {
-		return new URL(targetUrl);
-	} catch {
-		return undefined;
-	}
+	return URL.canParse(targetUrl) ? new URL(targetUrl) : undefined;
 }
 
 function shouldProxyHostname(hostname: string, port: number, env?: ProviderEnv): boolean {
