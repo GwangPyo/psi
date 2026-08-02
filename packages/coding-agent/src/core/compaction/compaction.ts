@@ -385,27 +385,18 @@ export function findTurnStartIndex(entries: SessionEntry[], entryIndex: number, 
 export interface CutPointResult {
 	/** Index of first entry to keep */
 	firstKeptEntryIndex: number;
-	/** Index of user message that starts the turn being split, or -1 if not splitting */
+	/** Always -1: compaction retains complete turns. */
 	turnStartIndex: number;
-	/** Whether this cut splits a turn (cut point is not a user message) */
+	/** Always false: compaction retains complete turns. */
 	isSplitTurn: boolean;
 }
 
 /**
- * Find the cut point in session entries that keeps approximately `keepRecentTokens`.
+ * Find the cut point in session entries that keeps recent complete turns.
  *
- * Algorithm: Walk backwards from newest, accumulating estimated message sizes.
- * Stop when we've accumulated >= keepRecentTokens. Cut at that point.
- *
- * Can cut at user OR assistant messages (never tool results). When cutting at an
- * assistant message with tool calls, its tool results come after and will be kept.
- *
- * Returns CutPointResult with:
- * - firstKeptEntryIndex: the entry index to start keeping from
- * - turnStartIndex: if cutting mid-turn, the user message that started that turn
- * - isSplitTurn: whether we're cutting in the middle of a turn
- *
- * Only considers entries between `startIndex` and `endIndex` (exclusive).
+ * Walk backwards from newest until the approximate token budget is filled, then
+ * move the boundary to the beginning of that turn. Only considers entries between
+ * `startIndex` and `endIndex` (exclusive).
  */
 export function findCutPoint(
 	entries: SessionEntry[],
@@ -455,16 +446,11 @@ export function findCutPoint(
 		cutIndex--;
 	}
 
-	// Determine if this is a split turn
-	const cutEntry = entries[cutIndex];
-	const startsTurn = isTurnStartEntry(cutEntry);
-	const turnStartIndex = startsTurn ? -1 : findTurnStartIndex(entries, cutIndex, startIndex);
+	// ponytail: one oversized recent turn can exceed keepRecentTokens; split only when turn-local retention exists.
+	const turnStartIndex = findTurnStartIndex(entries, cutIndex, startIndex);
+	if (turnStartIndex !== -1) cutIndex = turnStartIndex;
 
-	return {
-		firstKeptEntryIndex: cutIndex,
-		turnStartIndex,
-		isSplitTurn: !startsTurn && turnStartIndex !== -1,
-	};
+	return { firstKeptEntryIndex: cutIndex, turnStartIndex: -1, isSplitTurn: false };
 }
 
 // ============================================================================

@@ -138,10 +138,6 @@ interface ScoutReadLog {
 }
 
 interface ScoutArtifact {
-	version: 1;
-	artifactId: string;
-	createdAt: string;
-	model: string;
 	input: {
 		prompt: string;
 	};
@@ -169,9 +165,9 @@ function scoutArtifactPath(cwd: string, artifactId: string): string {
 	return resolve(cwd, SCOUT_ARTIFACT_DIRECTORY, `${artifactId}.json`);
 }
 
-async function writeScoutArtifact(cwd: string, artifact: ScoutArtifact): Promise<void> {
+async function writeScoutArtifact(cwd: string, artifactId: string, artifact: ScoutArtifact): Promise<void> {
 	await mkdir(resolve(cwd, SCOUT_ARTIFACT_DIRECTORY), { recursive: true });
-	await writeFile(scoutArtifactPath(cwd, artifact.artifactId), `${JSON.stringify(artifact, null, 2)}\n`, "utf8");
+	await writeFile(scoutArtifactPath(cwd, artifactId), `${JSON.stringify(artifact, null, 2)}\n`, "utf8");
 }
 
 function serializedPlanPath(cwd: string): string {
@@ -1020,10 +1016,10 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 				throw new Error(`No running scout exists for artifact ${params.artifactId}.`);
 			}
 			artifact.output = { status: "completed", text: params.summary };
-			await writeScoutArtifact(ctx.cwd, artifact);
+			await writeScoutArtifact(ctx.cwd, params.artifactId, artifact);
 			return {
 				content: [{ type: "text", text: "Scout findings saved. Ending scout." }],
-				details: { artifactId: artifact.artifactId },
+				details: { artifactId: params.artifactId },
 				terminate: true,
 			};
 		},
@@ -1060,15 +1056,11 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 			const artifactId = randomUUID();
 			const artifactPath = `${SCOUT_ARTIFACT_DIRECTORY}/${artifactId}.json`;
 			const artifact: ScoutArtifact = {
-				version: 1,
-				artifactId,
-				createdAt: new Date().toISOString(),
-				model: `${scoutModel.provider}/${scoutModel.id}`,
 				input: { prompt: params.prompt },
 				readLogs: [],
 				output: { status: "running" },
 			};
-			const progress = [`Scout ${artifact.model} is gathering information...`];
+			const progress = [`Scout ${scoutModel.provider}/${scoutModel.id} is gathering information...`];
 			const activities = new Map<string, { index: number; label: string }>();
 			const activeReadLogs = new Map<string, ScoutReadLog>();
 			// This closure belongs to exactly one spawned scout and is discarded with it.
@@ -1079,7 +1071,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 					details: { artifactId, artifactPath, status: "running" },
 				});
 			activeScoutArtifacts.set(artifactId, artifact);
-			await writeScoutArtifact(ctx.cwd, artifact);
+			await writeScoutArtifact(ctx.cwd, artifactId, artifact);
 			displayProgress();
 			let scout: ReturnType<typeof pi.spawnAgent> | undefined;
 			let timeout: ReturnType<typeof setTimeout> | undefined;
@@ -1163,7 +1155,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 				if (timeout) clearTimeout(timeout);
 				removeAbortListener?.();
 				scout?.dispose();
-				await writeScoutArtifact(ctx.cwd, artifact);
+				await writeScoutArtifact(ctx.cwd, artifactId, artifact);
 				activeScoutArtifacts.delete(artifactId);
 			}
 			const status = artifact.output.status === "completed" ? "completed" : artifact.output.status;

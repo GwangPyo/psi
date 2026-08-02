@@ -293,6 +293,10 @@ describe("built-in PlanFSM extension", () => {
 			expect(updates[0]).toContain("Scout test/scout is gathering information...");
 			expect(updates).toContainEqual(expect.stringContaining("… read · src/scout.ts"));
 			expect(updates.at(-1)).toContain("✓ read · src/scout.ts");
+			expect(artifact).not.toHaveProperty("version");
+			expect(artifact).not.toHaveProperty("artifactId");
+			expect(artifact).not.toHaveProperty("createdAt");
+			expect(artifact).not.toHaveProperty("model");
 			expect(artifact.input.prompt).toBe("Find the scout implementation.");
 			expect(artifact.output).toEqual({
 				status: "completed",

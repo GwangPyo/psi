@@ -333,26 +333,21 @@ describe("findCutPoint", () => {
 		expect(result.firstKeptEntryIndex).toBe(0);
 	});
 
-	it("should indicate split turn when cutting at assistant message", () => {
-		// Create a scenario where we cut at an assistant message mid-turn
+	it("keeps the newest turn intact when it exceeds the retention budget", () => {
 		const entries: SessionEntry[] = [
 			createMessageEntry(createUserMessage("Turn 1")),
-			createMessageEntry(createAssistantMessage("A1", createMockUsage(0, 100, 1000, 0))),
-			createMessageEntry(createUserMessage("Turn 2")), // index 2
-			createMessageEntry(createAssistantMessage("A2-1", createMockUsage(0, 100, 5000, 0))), // index 3
-			createMessageEntry(createAssistantMessage("A2-2", createMockUsage(0, 100, 8000, 0))), // index 4
-			createMessageEntry(createAssistantMessage("A2-3", createMockUsage(0, 100, 10000, 0))), // index 5
+			createMessageEntry(createAssistantMessage("A1")),
+			createMessageEntry(createUserMessage("Turn 2")),
+			createMessageEntry(createAssistantMessage("A2-1")),
+			createMessageEntry(createAssistantMessage("A2-2".repeat(2_000))),
+			createMessageEntry(createAssistantMessage("A2-3".repeat(2_000))),
 		];
 
-		// With keepRecentTokens = 3000, should cut somewhere in Turn 2
-		const result = findCutPoint(entries, 0, entries.length, 3000);
+		const result = findCutPoint(entries, 0, entries.length, 3_000);
 
-		// If cut at assistant message (not user), should indicate split turn
-		const cutEntry = entries[result.firstKeptEntryIndex] as SessionMessageEntry;
-		if (cutEntry.message.role === "assistant") {
-			expect(result.isSplitTurn).toBe(true);
-			expect(result.turnStartIndex).toBe(2); // Turn 2 starts at index 2
-		}
+		expect(result.firstKeptEntryIndex).toBe(2);
+		expect(result.isSplitTurn).toBe(false);
+		expect(result.turnStartIndex).toBe(-1);
 	});
 
 	it("should budget context-visible custom message entries", () => {
@@ -364,9 +359,9 @@ describe("findCutPoint", () => {
 		];
 
 		const tinyBudget = findCutPoint(entries, 0, entries.length, 1);
-		expect(tinyBudget.firstKeptEntryIndex).toBe(3);
-		expect(tinyBudget.isSplitTurn).toBe(true);
-		expect(tinyBudget.turnStartIndex).toBe(2);
+		expect(tinyBudget.firstKeptEntryIndex).toBe(2);
+		expect(tinyBudget.isSplitTurn).toBe(false);
+		expect(tinyBudget.turnStartIndex).toBe(-1);
 
 		const customFitsBudget = findCutPoint(entries, 0, entries.length, 2);
 		expect(customFitsBudget.firstKeptEntryIndex).toBe(2);
