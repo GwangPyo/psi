@@ -1,5 +1,6 @@
-import { appendFileSync, readFileSync } from "node:fs";
+import { appendFileSync } from "node:fs";
 import { contentText } from "@earendil-works/pi-ai";
+import { classifyNegativeSentiment } from "../extensions/dspy-features/sentiment/index.ts";
 import type { AgentSession } from "./agent-session.ts";
 import type { ModelRuntime } from "./model-runtime.ts";
 import type { SettingsManager } from "./settings-manager.ts";
@@ -37,19 +38,7 @@ export class BackgroundEmotionDaemon {
 		const lastAssistantText = contentText((lastAssistant as any).content, "\n").trim();
 		if (!lastAssistantText) return;
 
-		const isNegative = await this.analyzeEmotionInBackground(userText, lastAssistantText);
-		if (isNegative) {
-			const subagentResult = await this.runIntentionAnalysisSubagent(this.session.messages);
-
-			await this.session.sendCustomMessage(
-				{
-					customType: "intention_analysis_result",
-					content: [{ type: "text", text: `[Intention Analysis Result]\n${subagentResult}` }],
-					display: true,
-				},
-				{ deliverAs: "immediate" },
-			);
-		}
+		await this.analyzeEmotionInBackground(userText, lastAssistantText);
 	}
 
 	public async analyzeEmotionInBackground(userText: string, lastAssistantText: string): Promise<boolean> {
@@ -63,31 +52,32 @@ export class BackgroundEmotionDaemon {
 
 		try {
 			const authResult = await this.session.getSummarizationRequestAuth(bgModel);
-			const systemPrompt = readFileSync(new URL("./emotion-analysis-prompt.md", import.meta.url), "utf-8")
-				.replace("{{ASSISTANT_RESULT}}", lastAssistantText)
-				.replace("{{USER_REPLY}}", userText);
-
-			const result = await this.modelRuntime.completeSimple(
-				bgModel,
+			return classifyNegativeSentiment(
 				{
-					systemPrompt,
-					messages: [
-						{
-							role: "user",
-							content: [{ type: "text", text: "Classify the interaction using exactly one required tag." }],
-							timestamp: Date.now(),
-						},
-					],
+					complete: async (prompt) => {
+						const result = await this.modelRuntime.completeSimple(
+							bgModel,
+							{
+								messages: [
+									{
+										role: "user",
+										content: [{ type: "text", text: prompt }],
+										timestamp: Date.now(),
+									},
+								],
+							},
+							{
+								apiKey: authResult.apiKey,
+								headers: authResult.headers,
+								env: authResult.env,
+							},
+						);
+						return contentText(result.content, "\n");
+					},
 				},
-				{
-					apiKey: authResult.apiKey,
-					headers: authResult.headers,
-					env: authResult.env,
-				},
+				lastAssistantText,
+				userText,
 			);
-
-			const analysis = (result.content.find((c: any) => c.type === "text") as any)?.text.trim() || "";
-			return analysis === "<NEGATIVE_REACTION>";
 		} catch (e: any) {
 			console.error("Emotion analysis failed:", e);
 			appendFileSync(
@@ -95,57 +85,6 @@ export class BackgroundEmotionDaemon {
 				`\n[${new Date().toISOString()}] Emotion Analysis Error:\n${e.stack || e}\n`,
 			);
 			return false;
-		}
-	}
-
-	public async runIntentionAnalysisSubagent(messages: any[]): Promise<string> {
-		await this.session.sendCustomMessage(
-			{
-				customType: "negative_reaction_detected",
-				content: [{ type: "text", text: "Negative reaction detected. Running intention analysis..." }],
-				display: true,
-			},
-			{ deliverAs: "immediate" },
-		);
-
-		const subModelRef = this.settingsManager.getSubagentDefaultModel();
-		if (!subModelRef) return "Intention analysis failed: No subagent model configured.";
-
-		const [providerId, ...rest] = subModelRef.split("/");
-		const subModel = this.modelRuntime.getModel(providerId, rest.join("/"));
-		if (!subModel) return "Intention analysis failed: Model not found.";
-
-		try {
-			const authResult = await this.session.getSummarizationRequestAuth(subModel);
-			const systemPrompt = readFileSync(new URL("./intention-analysis-prompt.md", import.meta.url), "utf-8");
-
-			const historyText = messages
-				.slice(-5)
-				.map((m) => {
-					const content = (m as any).content ? contentText((m as any).content, " ") : "";
-					return `${m.role.toUpperCase()}: ${content}`;
-				})
-				.join("\n\n");
-
-			const userPrompt = `Recent History:\n${historyText}\n\nAnalyze the user's true intention.`;
-
-			const result = await this.modelRuntime.completeSimple(
-				subModel,
-				{
-					systemPrompt,
-					messages: [{ role: "user", content: [{ type: "text", text: userPrompt }], timestamp: Date.now() }],
-				},
-				{
-					apiKey: authResult.apiKey,
-					headers: authResult.headers,
-					env: authResult.env,
-				},
-			);
-
-			const analysis = (result.content.find((c: any) => c.type === "text") as any)?.text || "";
-			return analysis || "No specific intention could be determined.";
-		} catch (e) {
-			return `Intention analysis error: ${e instanceof Error ? e.message : String(e)}`;
 		}
 	}
 }

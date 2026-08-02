@@ -66,6 +66,7 @@
 		"rimraf": "6.1.2",
 		"gaxios": {
 			"rimraf": "6.1.2"
-		}
+		},
+		"@hono/node-server": "^2.0.5"
 	}
 }
