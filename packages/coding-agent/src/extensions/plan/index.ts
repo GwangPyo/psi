@@ -6,7 +6,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { type Component, HBox, Key, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
@@ -40,6 +40,7 @@ import { isSafeCommand } from "./utils.ts";
 
 const GUIDE_PLAN_TOOL = "guide_plan";
 const PLAN_GRILL_TOOL = "plan_grill";
+const FINISH_GRILL_TOOL = "finish_grill";
 const TRANSITION_PLAN_TOOL = "plan_transition";
 const PLAN_DRAFTING_WIDGET = "plan-drafting";
 const SCOUT_TOOL = "scout";
@@ -47,7 +48,15 @@ const SCOUT_RESULT_TOOL = "read_scout_result";
 const SCOUT_FINISH_TOOL = "finish_scout";
 const SCOUT_ARTIFACT_DIRECTORY = ".pi/scout-results";
 const SCOUT_TIMEOUT_MS = 3 * 60 * 1000;
-const PLAN_MODE_TOOLS = [SCOUT_TOOL, SCOUT_RESULT_TOOL, PLAN_GRILL_TOOL, GUIDE_PLAN_TOOL];
+const SCOUT_REPEATED_READ_THRESHOLD = 3;
+const SCOUT_REPEATED_READ_WARNING =
+	"Warning: you are repeatedly reading the same file. Read only the files that are truly necessary.";
+const SERIALIZED_PLAN_DIRECTORY = ".psi";
+const SERIALIZED_PLAN_FILE = "plan.json";
+const LOAD_SERIALIZED_PLAN = "Load serialized plan";
+const START_NEW_PLAN = "Start a new plan";
+const CUSTOM_GRILL_ANSWER = "Other (type a custom answer)";
+const PLAN_MODE_TOOLS = [SCOUT_TOOL, SCOUT_RESULT_TOOL, PLAN_GRILL_TOOL, FINISH_GRILL_TOOL, GUIDE_PLAN_TOOL];
 const NORMAL_MODE_TOOLS = ["read", "bash", "edit", "write", "grep", "find", "ls"];
 const PLAN_MODE_DISABLED_TOOLS = new Set<string>([
 	"edit",
@@ -59,7 +68,7 @@ const PLAN_MODE_DISABLED_TOOLS = new Set<string>([
 	"ls",
 	TRANSITION_PLAN_TOOL,
 ]);
-const PLAN_CONTROL_TOOLS = new Set<string>([PLAN_GRILL_TOOL, GUIDE_PLAN_TOOL, TRANSITION_PLAN_TOOL]);
+const PLAN_CONTROL_TOOLS = new Set<string>([PLAN_GRILL_TOOL, FINISH_GRILL_TOOL, GUIDE_PLAN_TOOL, TRANSITION_PLAN_TOOL]);
 const PLAN_MANAGED_TOOLS = new Set<string>([...PLAN_MODE_TOOLS, ...NORMAL_MODE_TOOLS, ...PLAN_CONTROL_TOOLS]);
 
 const PlanGrillParameters = Type.Object({
@@ -71,10 +80,28 @@ const PlanGrillParameters = Type.Object({
 		Type.Array(Type.String({ minLength: 1 }), {
 			minItems: 2,
 			uniqueItems: true,
-			description: "Optional concrete choices; omit when the user needs free-form input",
+			description: "Optional suggested answers; the UI also lets the user enter a custom answer",
 		}),
 	),
 });
+
+const FinishGrillParameters = Type.Object({
+	rationale: Type.String({
+		minLength: 1,
+		description: "Why all material decisions are resolved, or that the user explicitly requested completion",
+	}),
+});
+
+interface GrillConversationEntry {
+	question: string;
+	choices?: string[];
+	answer: string | null;
+}
+
+interface SerializedPlan {
+	grill: GrillConversationEntry[] | null;
+	plan: PlanMachineDefinition;
+}
 
 const PlanTransitionParameters = Type.Object({
 	event: Type.String({ minLength: 1, description: "Exact event name on the transition to dispatch" }),
@@ -97,10 +124,17 @@ interface PlanModeState {
 	executing: boolean;
 	grillBeforePlanning?: boolean;
 	grillCompleted?: boolean;
+	grillConversation?: GrillConversationEntry[];
 	machine?: PlanMachineDefinition;
 	snapshot?: PlanRuntimeSnapshot;
 	draft?: PlanGuideDraft;
 	toolsBeforePlanMode?: string[];
+}
+
+interface ScoutReadLog {
+	input: unknown;
+	output?: unknown;
+	isError?: boolean;
 }
 
 interface ScoutArtifact {
@@ -111,6 +145,7 @@ interface ScoutArtifact {
 	input: {
 		prompt: string;
 	};
+	readLogs: ScoutReadLog[];
 	output: {
 		status: "running" | "completed" | "timed_out" | "cancelled" | "failed";
 		text?: string;
@@ -139,6 +174,85 @@ async function writeScoutArtifact(cwd: string, artifact: ScoutArtifact): Promise
 	await writeFile(scoutArtifactPath(cwd, artifact.artifactId), `${JSON.stringify(artifact, null, 2)}\n`, "utf8");
 }
 
+function serializedPlanPath(cwd: string): string {
+	return resolve(cwd, SERIALIZED_PLAN_DIRECTORY, SERIALIZED_PLAN_FILE);
+}
+
+async function writeSerializedPlan(cwd: string, serialized: SerializedPlan): Promise<void> {
+	const directory = resolve(cwd, SERIALIZED_PLAN_DIRECTORY);
+	const destination = serializedPlanPath(cwd);
+	const temporary = `${destination}.${randomUUID()}.tmp`;
+	await mkdir(directory, { recursive: true });
+	try {
+		await writeFile(temporary, `${JSON.stringify(serialized, null, 2)}\n`, "utf8");
+		await rename(temporary, destination);
+	} catch (error) {
+		await rm(temporary, { force: true });
+		throw error;
+	}
+}
+
+async function readSerializedPlan(cwd: string): Promise<SerializedPlan | undefined> {
+	try {
+		const value: unknown = JSON.parse(await readFile(serializedPlanPath(cwd), "utf8"));
+		if (!value || typeof value !== "object" || !("plan" in value) || !("grill" in value)) {
+			throw new Error("Invalid serialized plan.");
+		}
+		const { grill, plan } = value as { grill: unknown; plan: unknown };
+		if (
+			grill !== null &&
+			(!Array.isArray(grill) ||
+				!grill.every(
+					(entry) =>
+						entry &&
+						typeof entry === "object" &&
+						typeof entry.question === "string" &&
+						(entry.answer === null || typeof entry.answer === "string") &&
+						(entry.choices === undefined ||
+							(Array.isArray(entry.choices) &&
+								entry.choices.every((choice: unknown) => typeof choice === "string"))),
+				))
+		) {
+			throw new Error("Invalid serialized grill conversation.");
+		}
+		return {
+			grill: grill as GrillConversationEntry[] | null,
+			plan: new PlanFSM(plan as PlanMachineDefinition).machine,
+		};
+	} catch (error) {
+		if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") return undefined;
+		throw error;
+	}
+}
+
+function formatScoutActivity(toolName: string, args: unknown): string {
+	if (!args || typeof args !== "object") return toolName;
+	const values = args as Record<string, unknown>;
+	const target = values.path ?? values.file_path ?? values.pattern ?? values.query ?? values.command;
+	return typeof target === "string" && target.trim()
+		? `${toolName} · ${target.replace(/\s+/g, " ").trim()}`
+		: toolName;
+}
+
+function scoutReadCounterKey(cwd: string, toolName: string, input: unknown): string | undefined {
+	if (!input || typeof input !== "object") return undefined;
+	const args = input as Record<string, unknown>;
+	const path = typeof args.path === "string" && args.path.trim() ? args.path : ".";
+	const normalizedPath = resolve(cwd, path);
+
+	if (toolName === "read") return `read:${normalizedPath}`;
+	if (toolName !== "grep" || typeof args.pattern !== "string") return undefined;
+
+	return `grep:${JSON.stringify({
+		path: normalizedPath,
+		pattern: args.pattern,
+		glob: args.glob,
+		ignoreCase: args.ignoreCase,
+		literal: args.literal,
+		context: args.context,
+	})}`;
+}
+
 function uniqueToolNames(toolNames: string[]): string[] {
 	return [...new Set(toolNames)];
 }
@@ -161,6 +275,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 	let executionMode = false;
 	let grillBeforePlanning = false;
 	let grillCompleted = false;
+	let grillConversation: GrillConversationEntry[] = [];
 	let machineDefinition: PlanMachineDefinition | undefined;
 	let runtimeSnapshot: PlanRuntimeSnapshot | undefined;
 	let planGuideDraft = createPlanGuideDraft();
@@ -482,6 +597,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 			executing: executionMode,
 			grillBeforePlanning,
 			grillCompleted,
+			grillConversation,
 			machine: machineDefinition,
 			snapshot: runtimeSnapshot,
 			draft: planGuideDraft,
@@ -502,10 +618,30 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		executionRunTransitionCount = undefined;
 		noProgressRuns = 0;
 		grillCompleted = !grillBeforePlanning;
+		grillConversation = [];
 		planMessageCountAtStart = 0;
 		lastSummaryMessageCount = 0;
 		backgroundSummaries = [];
 		disposeBackgroundAgent();
+	}
+
+	async function activateSerializedPlan(ctx: ExtensionContext, serialized: SerializedPlan): Promise<void> {
+		grillBeforePlanning = false;
+		clearPlan();
+		const fsm = new PlanFSM(serialized.plan);
+		planModeEnabled = true;
+		executionMode = false;
+		grillBeforePlanning = serialized.grill !== null;
+		grillCompleted = true;
+		grillConversation = serialized.grill ? structuredClone(serialized.grill) : [];
+		machineDefinition = fsm.machine;
+		runtimeSnapshot = fsm.snapshot;
+		swManager.enable();
+		enablePlanModeTools();
+		updateStatus(ctx);
+		persistState();
+		ctx.ui.notify(`Serialized PlanFSM loaded from ${SERIALIZED_PLAN_DIRECTORY}/${SERIALIZED_PLAN_FILE}.`, "info");
+		await presentReadyPlan(ctx);
 	}
 
 	async function togglePlanMode(ctx: ExtensionContext): Promise<void> {
@@ -517,6 +653,24 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 			restoreNormalModeTools();
 			ctx.ui.notify("Plan disabled and cleared. Full access restored.");
 		} else {
+			let serialized: SerializedPlan | undefined;
+			try {
+				serialized = await readSerializedPlan(ctx.cwd);
+			} catch (error) {
+				ctx.ui.notify(
+					`Stored plan cannot be loaded: ${error instanceof Error ? error.message : String(error)}`,
+					"warning",
+				);
+			}
+			if (serialized && ctx.hasUI) {
+				const choice = await ctx.ui.select("Serialized PlanFSM found", [LOAD_SERIALIZED_PLAN, START_NEW_PLAN]);
+				if (!choice) return;
+				if (choice === LOAD_SERIALIZED_PLAN) {
+					await activateSerializedPlan(ctx, serialized);
+					return;
+				}
+			}
+
 			grillBeforePlanning = ctx.hasUI
 				? await ctx.ui.confirm("Grill you?", "Inspect the implementation before making the plan.")
 				: false;
@@ -532,6 +686,46 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		}
 		updateStatus(ctx);
 		persistState();
+	}
+
+	function completeGrill(ctx: ExtensionContext, completedBy: "agent" | "user"): boolean {
+		if (!planModeEnabled || !grillBeforePlanning || grillCompleted) return false;
+		grillCompleted = true;
+		enablePlanModeTools();
+		persistState();
+		ctx.ui.notify(`Grill completed by ${completedBy}. Plan topology is now unlocked.`, "info");
+		return true;
+	}
+
+	async function presentReadyPlan(ctx: ExtensionContext): Promise<void> {
+		if (!machineDefinition || !runtimeSnapshot || !ctx.hasUI) return;
+		planSubmittedThisRun = false;
+		const planMessage = {
+			customType: "plan-machine",
+			content: formatPlanMachine(machineDefinition),
+			display: true,
+		};
+		const choice = await ctx.ui.select("PlanFSM ready", ["Execute the plan", "Stay in plan mode", "Refine the plan"]);
+
+		if (choice === "Execute the plan") {
+			const fsm = new PlanFSM(machineDefinition, runtimeSnapshot);
+			enableExecutionTools();
+			runtimeSnapshot = fsm.start();
+			planModeEnabled = false;
+			executionMode = true;
+			updateStatus(ctx);
+			persistState();
+			executionKickoffPending = true;
+		} else if (choice === "Refine the plan") {
+			const refinement = await ctx.ui.editor("Refine the PlanFSM:", "");
+			if (refinement?.trim()) {
+				clearPlan();
+				updateStatus(ctx);
+				persistState();
+				pi.sendMessage(planMessage, { deliverAs: "followUp" });
+				pi.sendUserMessage(refinement.trim(), { deliverAs: "followUp" });
+			}
+		}
 	}
 
 	function finishExecution(ctx: ExtensionContext): void {
@@ -592,11 +786,11 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		name: PLAN_GRILL_TOOL,
 		label: "Plan Grill",
 		description:
-			"Ask exactly one material planning question. When grill-before-planning is enabled, guide_plan remains blocked until the user answers this tool.",
-		promptSnippet: "Resolve one undiscoverable material planning decision before drafting",
+			"Ask one material planning question at a time. Call this repeatedly until all material decisions are resolved; guide_plan stays blocked until finish_grill is called.",
+		promptSnippet: "Resolve undiscoverable material planning decisions one at a time",
 		promptGuidelines: [
 			"Inspect the repository first and ask only a question whose answer materially changes the plan.",
-			"Ask exactly one question per call.",
+			"Ask exactly one question per call, wait for the answer, and repeat if more decisions are unresolved.",
 		],
 		parameters: PlanGrillParameters,
 		executionMode: "sequential",
@@ -617,23 +811,55 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 			}
 			if (!ctx.hasUI) throw new Error("plan_grill requires interactive UI.");
 
-			const answer = params.choices
-				? await ctx.ui.select(params.question, params.choices)
-				: await ctx.ui.editor(params.question, "");
-			if (!answer?.trim()) {
+			let answer: string | undefined;
+			if (params.choices) {
+				const choice = await ctx.ui.select(params.question, [...params.choices, CUSTOM_GRILL_ANSWER]);
+				answer = choice === CUSTOM_GRILL_ANSWER ? await ctx.ui.editor(params.question, "") : choice;
+			} else {
+				answer = await ctx.ui.editor(params.question, "");
+			}
+			const normalizedAnswer = answer?.trim() || null;
+			grillConversation.push({
+				question: params.question,
+				choices: params.choices ? [...params.choices] : undefined,
+				answer: normalizedAnswer,
+			});
+			persistState();
+			if (!normalizedAnswer) {
 				return {
 					content: [{ type: "text", text: "The grill question was cancelled or left unanswered." }],
 					details: { completed: false },
 				};
 			}
 
-			grillCompleted = true;
-			enablePlanModeTools();
-			persistState();
-			ctx.ui.notify("Planning grill completed. Plan topology is now unlocked.", "info");
 			return {
-				content: [{ type: "text", text: `User answer: ${answer.trim()}` }],
-				details: { completed: true, answer: answer.trim() },
+				content: [{ type: "text", text: `User answer: ${normalizedAnswer}` }],
+				details: { completed: false, answer: normalizedAnswer },
+			};
+		},
+	});
+
+	pi.registerTool({
+		name: FINISH_GRILL_TOOL,
+		label: "Finish Grill",
+		description:
+			"Mark the planning grill phase as complete. Call this only when all material decisions are resolved or the user explicitly requests completion.",
+		promptSnippet: "Unlock plan topology after resolving all decisions",
+		parameters: FinishGrillParameters,
+		executionMode: "sequential",
+		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+			if (!planModeEnabled) throw new Error("finish_grill is only available in plan mode.");
+			const completed = completeGrill(ctx, "agent");
+			return {
+				content: [
+					{
+						type: "text",
+						text: completed
+							? `Grill completed: ${params.rationale}. You may now call guide_plan.`
+							: "Grill is already completed or not active.",
+					},
+				],
+				details: { completed: grillCompleted, rationale: params.rationale },
 			};
 		},
 	});
@@ -658,7 +884,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 			if (!planModeEnabled) throw new Error("guide_plan is only available while plan mode is active.");
 			if (grillBeforePlanning && !grillCompleted) {
 				throw new Error(
-					`Planning grill is required. Inspect the repository, call ${PLAN_GRILL_TOOL}, and wait for the user's answer before using ${GUIDE_PLAN_TOOL}.`,
+					`Planning grill is still active. Continue with ${PLAN_GRILL_TOOL}, then call ${FINISH_GRILL_TOOL} only after all material decisions are resolved before using ${GUIDE_PLAN_TOOL}.`,
 				);
 			}
 			let result: ReturnType<typeof applyPlanGuideCommand>;
@@ -683,9 +909,17 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 			}
 			if (result.machine) {
 				const fsm = new PlanFSM(result.machine);
+				await writeSerializedPlan(ctx.cwd, {
+					grill: grillBeforePlanning ? grillConversation : null,
+					plan: fsm.machine,
+				});
 				machineDefinition = fsm.machine;
 				runtimeSnapshot = fsm.snapshot;
 				planSubmittedThisRun = true;
+				ctx.ui.notify(
+					`Grill conversation and PlanFSM saved to ${SERIALIZED_PLAN_DIRECTORY}/${SERIALIZED_PLAN_FILE}.`,
+					"info",
+				);
 			}
 			updateStatus(ctx);
 			persistState();
@@ -810,7 +1044,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 			prompt: Type.String({ description: "Instructions for the scout agent on what to investigate." }),
 		}),
 		executionMode: "parallel",
-		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+		async execute(_toolCallId, params, signal, onUpdate, ctx) {
 			const scoutModelReference = SettingsManager.create(ctx.cwd, getAgentDir(), {
 				projectTrusted: ctx.isProjectTrusted ? ctx.isProjectTrusted() : true,
 			}).getBackgroundAgentDefaultModel();
@@ -824,16 +1058,29 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 			}
 			ctx.ui.notify("Scout agent is gathering information...", "info");
 			const artifactId = randomUUID();
+			const artifactPath = `${SCOUT_ARTIFACT_DIRECTORY}/${artifactId}.json`;
 			const artifact: ScoutArtifact = {
 				version: 1,
 				artifactId,
 				createdAt: new Date().toISOString(),
 				model: `${scoutModel.provider}/${scoutModel.id}`,
 				input: { prompt: params.prompt },
+				readLogs: [],
 				output: { status: "running" },
 			};
+			const progress = [`Scout ${artifact.model} is gathering information...`];
+			const activities = new Map<string, { index: number; label: string }>();
+			const activeReadLogs = new Map<string, ScoutReadLog>();
+			// This closure belongs to exactly one spawned scout and is discarded with it.
+			const readCounts = new Map<string, number>();
+			const displayProgress = () =>
+				onUpdate?.({
+					content: [{ type: "text", text: progress.join("\n") }],
+					details: { artifactId, artifactPath, status: "running" },
+				});
 			activeScoutArtifacts.set(artifactId, artifact);
 			await writeScoutArtifact(ctx.cwd, artifact);
+			displayProgress();
 			let scout: ReturnType<typeof pi.spawnAgent> | undefined;
 			let timeout: ReturnType<typeof setTimeout> | undefined;
 			let removeAbortListener: (() => void) | undefined;
@@ -842,6 +1089,43 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 					model: scoutModel,
 					systemPrompt: buildScoutSystemPrompt(params.prompt, artifactId, SCOUT_FINISH_TOOL),
 					toolNames: ["read", "bash", "grep", "find", "ls", SCOUT_FINISH_TOOL],
+					afterToolCall: ({ toolName, input, result, isError }) => {
+						if (isError) return undefined;
+						const key = scoutReadCounterKey(ctx.cwd, toolName, input);
+						if (!key) return undefined;
+
+						const count = (readCounts.get(key) ?? 0) + 1;
+						readCounts.set(key, count);
+						if (count < SCOUT_REPEATED_READ_THRESHOLD) return undefined;
+
+						return {
+							content: [...result.content, { type: "text", text: SCOUT_REPEATED_READ_WARNING }],
+						};
+					},
+					onEvent: (event) => {
+						if (event.type === "tool_execution_start") {
+							const label = formatScoutActivity(event.toolName, event.args);
+							activities.set(event.toolCallId, { index: progress.length, label });
+							progress.push(`… ${label}`);
+							if (event.toolName === "read") {
+								const readLog = { input: event.args };
+								artifact.readLogs.push(readLog);
+								activeReadLogs.set(event.toolCallId, readLog);
+							}
+							displayProgress();
+						} else if (event.type === "tool_execution_end") {
+							const activity = activities.get(event.toolCallId);
+							if (!activity) return;
+							progress[activity.index] = `${event.isError ? "✗" : "✓"} ${activity.label}`;
+							const readLog = activeReadLogs.get(event.toolCallId);
+							if (readLog) {
+								readLog.output = event.result;
+								readLog.isError = event.isError;
+								activeReadLogs.delete(event.toolCallId);
+							}
+							displayProgress();
+						}
+					},
 				});
 				const timedOut = new Promise<never>((_resolve, reject) => {
 					timeout = setTimeout(() => reject(new ScoutTimedOutError()), SCOUT_TIMEOUT_MS);
@@ -882,7 +1166,6 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 				await writeScoutArtifact(ctx.cwd, artifact);
 				activeScoutArtifacts.delete(artifactId);
 			}
-			const artifactPath = `${SCOUT_ARTIFACT_DIRECTORY}/${artifactId}.json`;
 			const status = artifact.output.status === "completed" ? "completed" : artifact.output.status;
 			ctx.ui.notify(
 				`Scout ${status}; result saved to ${artifactPath}.`,
@@ -928,6 +1211,13 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 	pi.registerCommand("plan", {
 		description: "Toggle PlanFSM mode (read-only exploration)",
 		handler: async (_args, ctx) => await togglePlanMode(ctx),
+	});
+
+	pi.registerCommand("grillcomplete", {
+		description: "Explicitly finish the active planning grill",
+		handler: async (_args, ctx) => {
+			if (!completeGrill(ctx, "user")) ctx.ui.notify("No active planning grill to complete.", "info");
+		},
 	});
 
 	pi.registerCommand("todos", {
@@ -985,6 +1275,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 				systemPrompt: `${event.systemPrompt}\n\n${buildPlanSystemPrompt({
 					guideToolName: GUIDE_PLAN_TOOL,
 					grillToolName: PLAN_GRILL_TOOL,
+					finishGrillToolName: FINISH_GRILL_TOOL,
 					guideStatus: formatPlanGuideGrounding(planGuideDraft),
 					grillBeforePlanning,
 					grillCompleted,
@@ -1036,34 +1327,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 			return;
 		}
 		if (!planModeEnabled || !planSubmittedThisRun || !machineDefinition || !runtimeSnapshot || !ctx.hasUI) return;
-		planSubmittedThisRun = false;
-
-		const planMessage = {
-			customType: "plan-machine",
-			content: formatPlanMachine(machineDefinition),
-			display: true,
-		};
-		const choice = await ctx.ui.select("PlanFSM ready", ["Execute the plan", "Stay in plan mode", "Refine the plan"]);
-
-		if (choice === "Execute the plan") {
-			const fsm = new PlanFSM(machineDefinition, runtimeSnapshot);
-			enableExecutionTools();
-			runtimeSnapshot = fsm.start();
-			planModeEnabled = false;
-			executionMode = true;
-			updateStatus(ctx);
-			persistState();
-			executionKickoffPending = true;
-		} else if (choice === "Refine the plan") {
-			const refinement = await ctx.ui.editor("Refine the PlanFSM:", "");
-			if (refinement?.trim()) {
-				clearPlan();
-				updateStatus(ctx);
-				persistState();
-				pi.sendMessage(planMessage, { deliverAs: "followUp" });
-				pi.sendUserMessage(refinement.trim(), { deliverAs: "followUp" });
-			}
-		}
+		await presentReadyPlan(ctx);
 	});
 
 	pi.on("agent_settled", async () => {
@@ -1111,6 +1375,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 			executionMode = entry.data.executing ?? false;
 			grillBeforePlanning = entry.data.grillBeforePlanning ?? false;
 			grillCompleted = entry.data.grillCompleted ?? !grillBeforePlanning;
+			grillConversation = entry.data.grillConversation ?? [];
 			toolsBeforePlanMode = entry.data.toolsBeforePlanMode;
 			planGuideDraft = entry.data.draft ?? createPlanGuideDraft();
 			if (entry.data.machine && entry.data.snapshot) {

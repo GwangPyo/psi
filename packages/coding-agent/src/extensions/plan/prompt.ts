@@ -27,6 +27,7 @@ const SCOUT_PROMPT_TEMPLATE = loadSystemPromptTemplate(SCOUT_PROMPT_FILENAME);
 export interface BuildPlanSystemPromptOptions {
 	guideToolName: string;
 	grillToolName: string;
+	finishGrillToolName: string;
 	guideStatus: string;
 	grillBeforePlanning: boolean;
 	grillCompleted: boolean;
@@ -35,9 +36,9 @@ export interface BuildPlanSystemPromptOptions {
 export function buildPlanSystemPrompt(options: BuildPlanSystemPromptOptions): string {
 	const grillInstructions =
 		options.grillBeforePlanning && !options.grillCompleted
-			? `Grill mode is mandatory and topology is locked. Resolve repository facts with read-only tools, then call \`${options.grillToolName}\` with exactly one material question whose answer cannot be discovered. Wait for the answer before calling \`${options.guideToolName}\`.`
+			? `You are in a mandatory grill session and topology is locked. Resolve repository facts with read-only tools. Call \`${options.grillToolName}\` to ask exactly one material question at a time, wait for each answer, and continue through every unresolved decision branch. When you deliberately judge that all material decisions are resolved—or the user explicitly asks to finish the grill—call \`${options.finishGrillToolName}\`. Do not call \`${options.guideToolName}\` before that.`
 			: options.grillBeforePlanning
-				? `The mandatory grill was completed. Use its answer as a planning constraint. Ask another user question only if a new, undiscoverable choice would materially change the result.`
+				? `The mandatory grill is complete. Use all answers as planning constraints and proceed with \`${options.guideToolName}\`.`
 				: `Resolve repository facts with read-only tools. Ask the user only when an undiscoverable choice would materially change the result.`;
 
 	return PLAN_SYSTEM_PROMPT_TEMPLATE.replaceAll("{{GUIDE_TOOL}}", options.guideToolName)

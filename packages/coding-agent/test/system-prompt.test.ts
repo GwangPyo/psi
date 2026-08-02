@@ -33,10 +33,12 @@ describe("buildSystemPrompt", () => {
 	});
 
 	describe("default tools", () => {
-		test("includes the Markdown default without embedding a second prompt", () => {
+		test("includes the ultra Markdown default without embedding a second prompt", () => {
 			const prompt = buildSystemPrompt({ contextFiles: [], skills: [], cwd: process.cwd() });
 
 			expect(prompt.startsWith(defaultSystemPrompt)).toBe(true);
+			expect(prompt).toContain("Default intensity: **ultra**");
+			expect(prompt).toContain("Output code first");
 		});
 
 		test("includes all tools active for the current request", () => {

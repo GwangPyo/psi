@@ -1,10 +1,16 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { Compile } from "typebox/compile";
-import { describe, expect, it, vi } from "vitest";
-import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "../src/core/extensions/types.ts";
+import { afterAll, describe, expect, it, vi } from "vitest";
+import type {
+	ExtensionAPI,
+	ExtensionContext,
+	SpawnAgentOptions,
+	ToolDefinition,
+} from "../src/core/extensions/types.ts";
 import {
 	formatPlanMachine,
 	type PlanMachineDefinition,
@@ -17,6 +23,9 @@ import type { Theme } from "../src/modes/interactive/theme/theme.ts";
 type CommandHandler = (args: string, ctx: ExtensionContext) => Promise<void> | void;
 type EventHandler = (event: unknown, ctx: ExtensionContext) => Promise<unknown> | unknown;
 
+const testCwdRoot = join(process.env.PI_TEST_SCRATCH ?? tmpdir(), `pi-plan-fsm-extension-${process.pid}`);
+afterAll(async () => await rm(testCwdRoot, { recursive: true, force: true }));
+
 function setup(
 	options: {
 		confirmChoice?: boolean;
@@ -25,7 +34,7 @@ function setup(
 		entries?: unknown[];
 		cwd?: string;
 		model?: { provider: string; id: string };
-		spawnAgent?: (options: { systemPrompt: string }) => {
+		spawnAgent?: (options: Pick<SpawnAgentOptions, "systemPrompt" | "onEvent" | "afterToolCall">) => {
 			prompt(message: string): Promise<string>;
 			abort(): Promise<void>;
 			appendUserMessage(message: string): Promise<void>;
@@ -72,7 +81,7 @@ function setup(
 	planModeExtension(api);
 
 	const ctx = {
-		cwd: options.cwd ?? process.cwd(),
+		cwd: options.cwd ?? join(testCwdRoot, randomUUID()),
 		model: options.model,
 		modelRegistry: { find: vi.fn(() => undefined) },
 		isProjectTrusted: () => true,
@@ -87,7 +96,10 @@ function setup(
 			setWidget: vi.fn(),
 			theme: { fg: (_name: string, text: string) => text },
 		},
-		sessionManager: { getEntries: () => options.entries ?? [] },
+		sessionManager: {
+			getEntries: () => options.entries ?? [],
+			buildSessionContext: () => ({ messages: [] }),
+		},
 	} as unknown as ExtensionContext;
 
 	async function runCommand(name: string): Promise<void> {
@@ -96,11 +108,15 @@ function setup(
 		await command("", ctx);
 	}
 
-	async function executeTool(name: string, params: unknown): Promise<unknown> {
+	async function executeTool(
+		name: string,
+		params: unknown,
+		onUpdate?: Parameters<ToolDefinition["execute"]>[3],
+	): Promise<unknown> {
 		const tool = tools.get(name);
 		if (!tool) throw new Error(`Missing tool ${name}`);
 		const prepared = tool.prepareArguments ? tool.prepareArguments(params) : params;
-		return await tool.execute("call", prepared, undefined, undefined, ctx);
+		return await tool.execute("call", prepared, undefined, onUpdate, ctx);
 	}
 
 	function prepareToolArguments(name: string, params: unknown): unknown {
@@ -226,20 +242,43 @@ async function completeReviewCycle(
 }
 
 describe("built-in PlanFSM extension", () => {
-	it("persists scout input and output as a JSON artifact that the main agent can read", async () => {
+	it("persists scout input and output while displaying its investigation progress", async () => {
 		const cwd = await mkdtemp(join(tmpdir(), "pi-scout-artifact-"));
-		const prompt = vi.fn(async () => "Found the relevant implementation in src/scout.ts.");
+		const prompt = vi.fn(async (_message: string) => "Found the relevant implementation in src/scout.ts.");
 		const dispose = vi.fn();
-		const spawnAgent = vi.fn(() => ({
-			prompt,
+		const spawnAgent = vi.fn((options: Pick<SpawnAgentOptions, "systemPrompt" | "onEvent">) => ({
+			prompt: vi.fn(async (message: string) => {
+				await options.onEvent?.({
+					type: "tool_execution_start",
+					toolCallId: "read-call",
+					toolName: "read",
+					args: { path: "src/scout.ts" },
+				});
+				await options.onEvent?.({
+					type: "tool_execution_end",
+					toolCallId: "read-call",
+					toolName: "read",
+					result: {},
+					isError: false,
+				});
+				return await prompt(message);
+			}),
 			abort: vi.fn(async () => {}),
 			appendUserMessage: vi.fn(async () => {}),
 			dispose,
 		}));
 		const harness = setup({ cwd, model: { provider: "test", id: "scout" }, spawnAgent });
+		const updates: string[] = [];
 
 		try {
-			const scoutResult = (await harness.executeTool("scout", { prompt: "Find the scout implementation." })) as {
+			const scoutResult = (await harness.executeTool(
+				"scout",
+				{ prompt: "Find the scout implementation." },
+				(result) => {
+					const content = result.content[0];
+					if (content?.type === "text") updates.push(content.text);
+				},
+			)) as {
 				details: { artifactId: string; artifactPath: string; status: string };
 			};
 			const { artifactId, artifactPath, status } = scoutResult.details;
@@ -251,6 +290,9 @@ describe("built-in PlanFSM extension", () => {
 
 			expect(status).toBe("completed");
 			expect(prompt).toHaveBeenCalledWith("Find the scout implementation.");
+			expect(updates[0]).toContain("Scout test/scout is gathering information...");
+			expect(updates).toContainEqual(expect.stringContaining("… read · src/scout.ts"));
+			expect(updates.at(-1)).toContain("✓ read · src/scout.ts");
 			expect(artifact.input.prompt).toBe("Find the scout implementation.");
 			expect(artifact.output).toEqual({
 				status: "completed",
@@ -262,6 +304,72 @@ describe("built-in PlanFSM extension", () => {
 				content: Array<{ type: string; text?: string }>;
 			};
 			expect(readResult.content[0]).toMatchObject({ type: "text", text: serialized });
+		} finally {
+			await rm(cwd, { recursive: true, force: true });
+		}
+	});
+
+	it("warns a scout after the third identical read or grep, without sharing counters between scouts", async () => {
+		const cwd = await mkdtemp(join(tmpdir(), "pi-scout-read-count-"));
+		const outputsByScout: string[][] = [];
+		const spawnAgent = vi.fn((options: Pick<SpawnAgentOptions, "afterToolCall">) => {
+			const outputs: string[] = [];
+			outputsByScout.push(outputs);
+			const firstScout = outputsByScout.length === 1;
+			const calls: Array<[string, { path: string; pattern?: string }]> = firstScout
+				? [
+						["read", { path: "src/repeated.ts" }],
+						["read", { path: "src/repeated.ts" }],
+						["read", { path: "src/repeated.ts" }],
+						["grep", { path: "src", pattern: "repeated symbol" }],
+						["grep", { path: "src", pattern: "repeated symbol" }],
+						["grep", { path: "src", pattern: "repeated symbol" }],
+					]
+				: [
+						["read", { path: "src/repeated.ts" }],
+						["read", { path: "src/repeated.ts" }],
+						["grep", { path: "src", pattern: "repeated symbol" }],
+						["grep", { path: "src", pattern: "repeated symbol" }],
+					];
+			return {
+				prompt: vi.fn(async () => {
+					for (const [toolName, input] of calls) {
+						const result = { content: [{ type: "text" as const, text: "tool output" }], details: {} };
+						const patch = await options.afterToolCall?.({
+							toolName,
+							toolCallId: `${toolName}-${outputs.length}`,
+							input,
+							result,
+							isError: false,
+						});
+						outputs.push(
+							(patch?.content ?? result.content)
+								.map((content) => (content.type === "text" ? content.text : ""))
+								.join("\n"),
+						);
+					}
+					return "Scout completed.";
+				}),
+				abort: vi.fn(async () => {}),
+				appendUserMessage: vi.fn(async () => {}),
+				dispose: vi.fn(),
+			};
+		});
+		const harness = setup({ cwd, model: { provider: "test", id: "scout" }, spawnAgent });
+
+		try {
+			await harness.executeTool("scout", { prompt: "Inspect the repeated implementation." });
+			await harness.executeTool("scout", { prompt: "Inspect it again in a fresh scout." });
+
+			const warning =
+				"Warning: you are repeatedly reading the same file. Read only the files that are truly necessary.";
+			expect(outputsByScout[0]?.[0]).not.toContain(warning);
+			expect(outputsByScout[0]?.[1]).not.toContain(warning);
+			expect(outputsByScout[0]?.[2]).toContain(warning);
+			expect(outputsByScout[0]?.[3]).not.toContain(warning);
+			expect(outputsByScout[0]?.[4]).not.toContain(warning);
+			expect(outputsByScout[0]?.[5]).toContain(warning);
+			expect(outputsByScout[1]).toEqual(["tool output", "tool output", "tool output", "tool output"]);
 		} finally {
 			await rm(cwd, { recursive: true, force: true });
 		}
@@ -315,14 +423,26 @@ describe("built-in PlanFSM extension", () => {
 			resolvePromptStarted = resolve;
 		});
 		const abort = vi.fn(async () => rejectPrompt?.(new Error("aborted")));
-		const spawnAgent = vi.fn(() => ({
-			prompt: vi.fn(
-				async () =>
-					await new Promise<string>((_resolve, reject) => {
-						rejectPrompt = reject;
-						resolvePromptStarted();
-					}),
-			),
+		const spawnAgent = vi.fn((options: Pick<SpawnAgentOptions, "onEvent">) => ({
+			prompt: vi.fn(async () => {
+				await options.onEvent?.({
+					type: "tool_execution_start",
+					toolCallId: "read-call",
+					toolName: "read",
+					args: { path: "src/scout.ts", offset: 1, limit: 20 },
+				});
+				await options.onEvent?.({
+					type: "tool_execution_end",
+					toolCallId: "read-call",
+					toolName: "read",
+					result: { content: [{ type: "text", text: "scout implementation" }] },
+					isError: false,
+				});
+				return await new Promise<string>((_resolve, reject) => {
+					rejectPrompt = reject;
+					resolvePromptStarted();
+				});
+			}),
 			abort,
 			appendUserMessage: vi.fn(async () => {}),
 			dispose: vi.fn(),
@@ -336,10 +456,22 @@ describe("built-in PlanFSM extension", () => {
 			await promptStarted;
 			await vi.advanceTimersByTimeAsync(3 * 60 * 1000);
 			const result = await resultPromise;
-			const serialized = await readFile(join(cwd, result.details.artifactPath), "utf8");
-			const artifact = JSON.parse(serialized) as { output: { status: string; error?: string } };
+			const readResult = (await harness.executeTool("read_scout_result", {
+				artifactId: result.details.artifactId,
+			})) as { content: Array<{ type: string; text: string }> };
+			const artifact = JSON.parse(readResult.content[0]!.text) as {
+				readLogs: Array<{ input: unknown; output?: unknown; isError?: boolean }>;
+				output: { status: string; error?: string };
+			};
 
 			expect(result.details.status).toBe("timed_out");
+			expect(artifact.readLogs).toEqual([
+				{
+					input: { path: "src/scout.ts", offset: 1, limit: 20 },
+					output: { content: [{ type: "text", text: "scout implementation" }] },
+					isError: false,
+				},
+			]);
 			expect(artifact.output).toEqual({ status: "timed_out", error: "Scout exceeded its 3-minute limit" });
 			expect(abort).toHaveBeenCalledOnce();
 		} finally {
@@ -941,18 +1073,22 @@ describe("built-in PlanFSM extension", () => {
 		expect(result.details.machine.parallelism.independentStateGroups).toEqual([["implement_ui", "verify_core"]]);
 	});
 
-	it("enforces the grill gate before guide construction", async () => {
-		const harness = setup({ confirmChoice: true, editorAnswer: "Preserve the public API." });
+	it("keeps the grill gate locked across questions until the agent completes it", async () => {
+		const harness = setup({
+			confirmChoice: true,
+			selectChoice: "Other (type a custom answer)",
+			editorAnswer: "Preserve the public API.",
+		});
 		await harness.runCommand("plan");
 
-		expect(harness.activeTools()).toContain("plan_grill");
+		expect(harness.activeTools()).toEqual(expect.arrayContaining(["plan_grill", "finish_grill"]));
 		await expect(
 			harness.executeTool("guide_plan", {
 				operation: "start",
 				id: "blocked",
 				goal: "Must be grilled first",
 			}),
-		).rejects.toThrow("Planning grill is required");
+		).rejects.toThrow("Planning grill is still active");
 
 		const context = (await harness.emit("before_agent_start", {
 			type: "before_agent_start",
@@ -960,17 +1096,93 @@ describe("built-in PlanFSM extension", () => {
 			systemPrompt: "base prompt",
 			systemPromptOptions: {},
 		})) as { systemPrompt?: string };
-		expect(context.systemPrompt).toContain("Grill mode is mandatory and topology is locked");
+		expect(context.systemPrompt).toContain("mandatory grill session and topology is locked");
+		expect(context.systemPrompt).toContain("finish_grill");
 
-		await harness.executeTool("plan_grill", {
+		const answer = (await harness.executeTool("plan_grill", {
 			question: "Which compatibility boundary must remain stable?",
+			choices: ["Public API", "Stored data"],
+		})) as { details: { answer?: string } };
+		expect(answer.details.answer).toBe("Preserve the public API.");
+		await harness.executeTool("plan_grill", {
+			question: "Which failure mode is acceptable?",
 		});
-		expect(harness.activeTools()).not.toContain("plan_grill");
+		await expect(
+			harness.executeTool("guide_plan", {
+				operation: "start",
+				id: "still-blocked",
+				goal: "Use the grill answers",
+			}),
+		).rejects.toThrow("Planning grill is still active");
+
+		await harness.executeTool("finish_grill", {
+			rationale: "Both compatibility and failure-policy branches are resolved.",
+		});
 		await expect(
 			harness.executeTool("guide_plan", {
 				operation: "start",
 				id: "unlocked",
-				goal: "Use the grill answer",
+				goal: "Use the grill answers",
+			}),
+		).resolves.toBeDefined();
+	});
+
+	it("serializes the grill conversation and finalized FSM under .psi, then loads it through /plan", async () => {
+		const cwd = join(testCwdRoot, randomUUID());
+		const first = setup({
+			cwd,
+			confirmChoice: true,
+			selectChoice: "Other (type a custom answer)",
+			editorAnswer: "Preserve the public API.",
+		});
+		await first.runCommand("plan");
+		await first.executeTool("plan_grill", {
+			question: "Which compatibility boundary must remain stable?",
+			choices: ["Public API", "Stored data"],
+		});
+		await first.executeTool("finish_grill", { rationale: "The compatibility boundary is resolved." });
+		const machine = await buildLinearGuide(first);
+		const serialized = JSON.parse(await readFile(join(cwd, ".psi", "plan.json"), "utf8")) as {
+			grill: Array<{ question: string; choices?: string[]; answer: string | null }>;
+			plan: PlanMachineDefinition;
+		};
+		expect(serialized.grill).toEqual([
+			{
+				question: "Which compatibility boundary must remain stable?",
+				choices: ["Public API", "Stored data"],
+				answer: "Preserve the public API.",
+			},
+		]);
+		expect(serialized.plan.id).toBe(machine.id);
+
+		const loaded = setup({ cwd, selectChoice: "Load serialized plan" });
+		await loaded.runCommand("plan");
+		expect(loaded.activeTools()).toContain("guide_plan");
+		expect(loaded.persisted.at(-1)?.data).toMatchObject({
+			enabled: true,
+			grillCompleted: true,
+			machine: { id: machine.id },
+		});
+
+		await writeFile(join(cwd, ".psi", "plan.json"), JSON.stringify({ grill: {}, plan: serialized.plan }));
+		const rejected = setup({ cwd });
+		await rejected.runCommand("plan");
+		expect(rejected.ctx.ui.notify).toHaveBeenCalledWith(
+			expect.stringContaining("Stored plan cannot be loaded"),
+			"warning",
+		);
+	});
+
+	it("lets the user explicitly complete the grill", async () => {
+		const harness = setup({ confirmChoice: true });
+		await harness.runCommand("plan");
+		await harness.runCommand("grillcomplete");
+
+		await expect(
+			harness.executeTool("guide_plan", {
+				operation: "start",
+				id: "user-unlocked",
+				goal: "Respect explicit user completion",
 			}),
 		).resolves.toBeDefined();
 	});

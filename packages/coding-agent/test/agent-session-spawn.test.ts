@@ -114,6 +114,9 @@ describe("AgentSession.spawnAgent", () => {
 			content: [{ type: "text" as const, text: "verified evidence" }],
 			details: {},
 		}));
+		const afterToolCall = vi.fn(async ({ result }) => ({
+			content: [...result.content, { type: "text" as const, text: "after-tool marker" }],
+		}));
 		const seenSystemPrompts: string[] = [];
 		const seenMessages: unknown[][] = [];
 		const parentAgent = new Agent({
@@ -173,6 +176,7 @@ describe("AgentSession.spawnAgent", () => {
 			systemPrompt: "isolated child prompt",
 			thinkingLevel: "high",
 			toolNames: ["inspect"],
+			afterToolCall,
 			onEvent: (event) => {
 				events.push(event.type);
 			},
@@ -184,7 +188,11 @@ describe("AgentSession.spawnAgent", () => {
 			expect(session.systemPrompt).not.toContain("spawn custom prompt");
 			expect(await spawned.prompt("Prepare a brief")).toBe("brief complete");
 			expect(execute).toHaveBeenCalledTimes(1);
+			expect(afterToolCall).toHaveBeenCalledWith(
+				expect.objectContaining({ toolName: "inspect", input: { path: "README.md" }, isError: false }),
+			);
 			expect(seenSystemPrompts).toHaveLength(2);
+			expect(JSON.stringify(seenMessages[1])).toContain("after-tool marker");
 			for (const systemPrompt of seenSystemPrompts) {
 				expect(systemPrompt).toContain("spawn custom prompt");
 				expect(systemPrompt).toContain("shared appended instructions");

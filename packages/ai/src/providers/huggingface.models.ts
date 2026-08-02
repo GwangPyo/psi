@@ -173,6 +173,14 @@ export const HUGGINGFACE_MODELS = values as {
 		id: "stepfun-ai/Step-3.7-Flash";
 		provider: "huggingface";
 	};
+	"tencent/Hy3": Model<"openai-completions"> & {
+		id: "tencent/Hy3";
+		provider: "huggingface";
+	};
+	"thinkingmachines/Inkling": Model<"openai-completions"> & {
+		id: "thinkingmachines/Inkling";
+		provider: "huggingface";
+	};
 	"zai-org/GLM-4.5": Model<"openai-completions"> & {
 		id: "zai-org/GLM-4.5";
 		provider: "huggingface";

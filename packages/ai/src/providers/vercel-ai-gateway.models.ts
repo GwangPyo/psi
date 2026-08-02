@@ -233,6 +233,10 @@ export const VERCEL_AI_GATEWAY_MODELS = values as {
 		id: "deepseek/deepseek-v4-flash";
 		provider: "vercel-ai-gateway";
 	};
+	"deepseek/deepseek-v4-flash-0731": Model<"anthropic-messages"> & {
+		id: "deepseek/deepseek-v4-flash-0731";
+		provider: "vercel-ai-gateway";
+	};
 	"deepseek/deepseek-v4-pro": Model<"anthropic-messages"> & {
 		id: "deepseek/deepseek-v4-pro";
 		provider: "vercel-ai-gateway";
@@ -663,6 +667,10 @@ export const VERCEL_AI_GATEWAY_MODELS = values as {
 	};
 	"thinkingmachines/inkling": Model<"anthropic-messages"> & {
 		id: "thinkingmachines/inkling";
+		provider: "vercel-ai-gateway";
+	};
+	"thinkingmachines/inkling-small": Model<"anthropic-messages"> & {
+		id: "thinkingmachines/inkling-small";
 		provider: "vercel-ai-gateway";
 	};
 	"xai/grok-4.1-fast-non-reasoning": Model<"anthropic-messages"> & {

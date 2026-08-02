@@ -9,6 +9,10 @@ export const FIREWORKS_MODELS = values as {
 		id: "accounts/fireworks/models/deepseek-v4-flash";
 		provider: "fireworks";
 	};
+	"accounts/fireworks/models/deepseek-v4-flash-0731": Model<"anthropic-messages"> & {
+		id: "accounts/fireworks/models/deepseek-v4-flash-0731";
+		provider: "fireworks";
+	};
 	"accounts/fireworks/models/deepseek-v4-pro": Model<"anthropic-messages"> & {
 		id: "accounts/fireworks/models/deepseek-v4-pro";
 		provider: "fireworks";

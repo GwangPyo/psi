@@ -183,6 +183,8 @@ describe("provider usage", () => {
 		expect(report.indexOf("Light")).toBeLessThan(report.indexOf("Heavy"));
 		expect(report).toContain("100");
 		expect(report).toContain("PROVIDER");
+		expect(report).not.toContain("COST");
+		expect(report).not.toContain("$");
 		expect(report).not.toContain("(light)");
 	});
 });

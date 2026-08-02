@@ -991,6 +991,16 @@ export class AgentSession {
 					input: args,
 				});
 		}
+		if (options.afterToolCall) {
+			agent.afterToolCall = async ({ toolCall, args, result, isError }) =>
+				await options.afterToolCall?.({
+					toolName: toolCall.name,
+					toolCallId: toolCall.id,
+					input: args,
+					result,
+					isError,
+				});
+		}
 		const unsubscribe = options.onEvent ? agent.subscribe(options.onEvent) : undefined;
 		const spawnedRecord = { agent, running: false };
 		this._spawnedAgents.add(spawnedRecord);

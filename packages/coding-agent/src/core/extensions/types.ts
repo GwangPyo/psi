@@ -9,6 +9,7 @@
  */
 
 import type {
+	AfterToolCallResult,
 	AgentEvent,
 	AgentMessage,
 	AgentToolResult,
@@ -1570,6 +1571,13 @@ export interface SpawnAgentOptions {
 		toolCallId: string;
 		input: unknown;
 	}) => BeforeToolCallResult | undefined | Promise<BeforeToolCallResult | undefined>;
+	afterToolCall?: (event: {
+		toolName: string;
+		toolCallId: string;
+		input: unknown;
+		result: AgentToolResult<any>;
+		isError: boolean;
+	}) => AfterToolCallResult | undefined | Promise<AfterToolCallResult | undefined>;
 }
 
 export interface SpawnedAgent {

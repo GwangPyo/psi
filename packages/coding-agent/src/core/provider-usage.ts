@@ -394,7 +394,6 @@ export function formatProviderUsageReport(entries: readonly ProviderUsageReportE
 			provider,
 			formatInteger(entry.recent.requests),
 			formatInteger(entry.recent.tokens),
-			formatCost(entry.recent.cost),
 			formatLastUsed(entry.recent.lastUsedAt, now),
 		]);
 	}
@@ -404,12 +403,7 @@ export function formatProviderUsageReport(entries: readonly ProviderUsageReportE
 		renderPlainTable(["PROVIDER", "QUOTA", "LEFT", "USED", "RESET"], quotaRows, [28, 24, 8, 8, 12], new Set([2, 3])),
 		"",
 		"Recent Session Usage (least → most used)",
-		renderPlainTable(
-			["PROVIDER", "REQUESTS", "TOKENS", "COST", "LAST USED"],
-			recentRows,
-			[28, 10, 14, 10, 12],
-			new Set([1, 2, 3]),
-		),
+		renderPlainTable(["PROVIDER", "REQUESTS", "TOKENS", "LAST USED"], recentRows, [28, 10, 14, 12], new Set([1, 2])),
 	].join("\n");
 }
 
@@ -486,11 +480,6 @@ function formatPercentage(value: number): string {
 
 function formatInteger(value: number): string {
 	return Number.isFinite(value) ? Math.round(value).toLocaleString("en-US") : "?";
-}
-
-function formatCost(value: number): string {
-	if (!Number.isFinite(value)) return "?";
-	return value === 0 ? "$0" : `$${value.toFixed(4)}`;
 }
 
 function formatLastUsed(timestamp: number | undefined, now: number): string {

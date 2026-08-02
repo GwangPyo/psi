@@ -63,9 +63,7 @@ export class BackgroundEmotionDaemon {
 
 		try {
 			const authResult = await this.session.getSummarizationRequestAuth(bgModel);
-			let systemPrompt = readFileSync(new URL("./emotion-analysis-prompt.md", import.meta.url), "utf-8");
-			systemPrompt = systemPrompt
-				.replace("{{PREVIOUS_SUMMARY}}", this.backgroundRunningContext || "No previous summary.")
+			const systemPrompt = readFileSync(new URL("./emotion-analysis-prompt.md", import.meta.url), "utf-8")
 				.replace("{{ASSISTANT_RESULT}}", lastAssistantText)
 				.replace("{{USER_REPLY}}", userText);
 
@@ -76,9 +74,7 @@ export class BackgroundEmotionDaemon {
 					messages: [
 						{
 							role: "user",
-							content: [
-								{ type: "text", text: "Please update the running summary according to the instructions." },
-							],
+							content: [{ type: "text", text: "Classify the interaction using exactly one required tag." }],
 							timestamp: Date.now(),
 						},
 					],
@@ -90,32 +86,13 @@ export class BackgroundEmotionDaemon {
 				},
 			);
 
-			const analysis = (result.content.find((c: any) => c.type === "text") as any)?.text || "";
-			console.log("[EmotionDaemon] analysis:", analysis);
-			let isNegative = false;
-			let summaryText = analysis;
-
-			if (analysis.includes("<NEGATIVE_REACTION>")) {
-				isNegative = true;
-				summaryText = analysis.replace("<NEGATIVE_REACTION>", "").trim();
-				appendFileSync(
-					".pi/emotion-analysis.log",
-					`\n[${new Date().toISOString()}] Emotion Analysis (Negative Detected):\n${summaryText}\n`,
-				);
-			}
-
-			if (summaryText.trim()) {
-				this.backgroundRunningContext = summaryText.trim();
-			}
-
-			return isNegative;
+			const analysis = (result.content.find((c: any) => c.type === "text") as any)?.text.trim() || "";
+			return analysis === "<NEGATIVE_REACTION>";
 		} catch (e: any) {
 			console.error("Emotion analysis failed:", e);
-			import("node:fs").then((fs) =>
-				fs.appendFileSync(
-					".pi/emotion-analysis-error.log",
-					`\n[${new Date().toISOString()}] Emotion Analysis Error:\n${e.stack || e}\n`,
-				),
+			appendFileSync(
+				".pi/emotion-analysis-error.log",
+				`\n[${new Date().toISOString()}] Emotion Analysis Error:\n${e.stack || e}\n`,
 			);
 			return false;
 		}
@@ -124,8 +101,8 @@ export class BackgroundEmotionDaemon {
 	public async runIntentionAnalysisSubagent(messages: any[]): Promise<string> {
 		await this.session.sendCustomMessage(
 			{
-				customType: "intention_analysis",
-				content: [{ type: "text", text: "Agent degradation detected: intention analysis starting..." }],
+				customType: "negative_reaction_detected",
+				content: [{ type: "text", text: "Negative reaction detected. Running intention analysis..." }],
 				display: true,
 			},
 			{ deliverAs: "immediate" },

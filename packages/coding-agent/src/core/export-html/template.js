@@ -1324,7 +1324,6 @@
         let userMessages = 0, assistantMessages = 0, toolResults = 0;
         let customMessages = 0, compactions = 0, branchSummaries = 0, toolCalls = 0;
         const tokens = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
-        const cost = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
         const models = new Set();
 
         for (const entry of entryList) {
@@ -1339,12 +1338,6 @@
                 tokens.output += msg.usage.output || 0;
                 tokens.cacheRead += msg.usage.cacheRead || 0;
                 tokens.cacheWrite += msg.usage.cacheWrite || 0;
-                if (msg.usage.cost) {
-                  cost.input += msg.usage.cost.input || 0;
-                  cost.output += msg.usage.cost.output || 0;
-                  cost.cacheRead += msg.usage.cost.cacheRead || 0;
-                  cost.cacheWrite += msg.usage.cost.cacheWrite || 0;
-                }
               }
               toolCalls += msg.content.filter(c => c.type === 'toolCall').length;
             }
@@ -1358,14 +1351,12 @@
           }
         }
 
-        return { userMessages, assistantMessages, toolResults, customMessages, compactions, branchSummaries, toolCalls, tokens, cost, models: Array.from(models) };
+        return { userMessages, assistantMessages, toolResults, customMessages, compactions, branchSummaries, toolCalls, tokens, models: Array.from(models) };
       }
 
       const globalStats = computeStats(entries);
 
       function renderHeader() {
-        const totalCost = globalStats.cost.input + globalStats.cost.output + globalStats.cost.cacheRead + globalStats.cost.cacheWrite;
-
         const tokenParts = [];
         if (globalStats.tokens.input) tokenParts.push(`↑${formatTokens(globalStats.tokens.input)}`);
         if (globalStats.tokens.output) tokenParts.push(`↓${formatTokens(globalStats.tokens.output)}`);
@@ -1397,7 +1388,6 @@
               <div class="info-item"><span class="info-label">Messages:</span><span class="info-value">${msgParts.join(', ') || '0'}</span></div>
               <div class="info-item"><span class="info-label">Tool Calls:</span><span class="info-value">${globalStats.toolCalls}</span></div>
               <div class="info-item"><span class="info-label">Tokens:</span><span class="info-value">${tokenParts.join(' ') || '0'}</span></div>
-              <div class="info-item"><span class="info-label">Cost:</span><span class="info-value">$${totalCost.toFixed(3)}</span></div>
             </div>
           </div>`;
 
