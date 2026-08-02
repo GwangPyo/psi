@@ -5,6 +5,9 @@
  * createAgentSession() options. The SDK does the heavy lifting.
  */
 
+import { existsSync } from "node:fs";
+import { homedir } from "node:os";
+import { parse } from "node:path";
 import { createInterface } from "node:readline";
 import { type ImageContent, modelsAreEqual } from "@earendil-works/pi-ai";
 import chalk from "chalk";
@@ -50,6 +53,26 @@ import { isLocalPath, normalizePath, resolvePath } from "./utils/paths.ts";
 import { cleanupWindowsSelfUpdateQuarantine } from "./utils/windows-self-update.ts";
 
 const EXTENSION_LOAD_FAILURE_HINT = 'Hint: Start without extensions using "pi -ne".';
+
+export function resolveStartupCwd(): string {
+	let missingCwdError: unknown;
+	try {
+		return process.cwd();
+	} catch (error) {
+		if (!error || typeof error !== "object" || !("code" in error) || error.code !== "ENOENT") throw error;
+		missingCwdError = error;
+	}
+
+	const fallbackCwd = [process.env.PWD, homedir(), parse(process.execPath).root].find(
+		(candidate): candidate is string => !!candidate && existsSync(candidate),
+	);
+	if (!fallbackCwd) throw missingCwdError;
+
+	process.chdir(fallbackCwd);
+	const cwd = process.cwd();
+	process.env.PWD = cwd;
+	return cwd;
+}
 
 /**
  * Read all content from piped stdin.
@@ -483,7 +506,7 @@ export async function main(args: string[], options?: MainOptions) {
 		cleanupWindowsSelfUpdateQuarantine(getPackageDir());
 	}
 
-	const cwd = process.cwd();
+	const cwd = resolveStartupCwd();
 	const agentDir = getAgentDir();
 	const bootstrapSettingsManager = SettingsManager.create(cwd, agentDir, { projectTrusted: false });
 	applyHttpProxySettings(bootstrapSettingsManager.getGlobalSettings().httpProxy);
