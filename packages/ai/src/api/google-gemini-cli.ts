@@ -249,7 +249,7 @@ export function buildGoogleGeminiCliRequest(
 	}
 	if (Object.keys(generationConfig).length > 0) request.generationConfig = generationConfig;
 	if (context.tools?.length) {
-		request.tools = convertTools(context.tools);
+		request.tools = convertTools(context.tools, /claude/i.test(`${model.id} ${model.name}`));
 		if (options.toolChoice) {
 			request.toolConfig = { functionCallingConfig: { mode: mapToolChoice(options.toolChoice) } };
 		}

@@ -2,7 +2,7 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createHarness, getAssistantTexts, getMessageText, getUserTexts, type Harness } from "./harness.ts";
 
 async function createWaitingHarness(
@@ -87,6 +87,26 @@ describe("AgentSession queue characterization", () => {
 		expect(commandRuns).toEqual(["hello world"]);
 		expect(harness.getPendingResponseCount()).toBe(0);
 		expect(harness.session.messages).toEqual([]);
+	});
+
+	it("aborts a running turn when negative sentiment is detected", async () => {
+		const waiting = await createWaitingHarness();
+		const { harness, waitForToolStart, promptPromise, releaseToolExecution } = waiting;
+		harnesses.push(harness);
+		harness.setResponses([fauxAssistantMessage(fauxToolCall("wait", {}), { stopReason: "toolUse" })]);
+
+		await waitForToolStart;
+		const analyze = vi
+			.spyOn(harness.session.backgroundEmotionDaemon, "analyzeAndRunIntention")
+			.mockResolvedValue(true);
+		const interruption = harness.session.prompt("Stop and clarify.", { streamingBehavior: "steer" });
+		await Promise.resolve();
+		releaseToolExecution();
+		await Promise.all([interruption, promptPromise]);
+
+		expect(analyze).toHaveBeenCalledWith("Stop and clarify.");
+		expect(getUserTexts(harness)).toContain("Stop and clarify.");
+		expect(harness.session.isIdle).toBe(true);
 	});
 
 	it("delivers extension-origin steering messages before the next LLM call", async () => {

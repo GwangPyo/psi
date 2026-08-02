@@ -10,35 +10,24 @@ export class BackgroundEmotionDaemon {
 	public session: AgentSession;
 	public settingsManager: SettingsManager;
 	public modelRuntime: ModelRuntime;
-	private _unsubscribe: () => void;
 
 	constructor(session: AgentSession, settingsManager: SettingsManager, modelRuntime: ModelRuntime) {
 		this.session = session;
 		this.settingsManager = settingsManager;
 		this.modelRuntime = modelRuntime;
-
-		this._unsubscribe = this.session.subscribe((event: any) => {
-			if (event.type === "user_message_added") {
-				this.analyzeAndRunIntention(event.text).catch((e) => console.error("Daemon error:", e));
-			}
-		});
 	}
 
-	public dispose() {
-		this._unsubscribe();
-	}
-
-	public async analyzeAndRunIntention(userText: string) {
+	public async analyzeAndRunIntention(userText: string): Promise<boolean> {
 		const lastAssistant = this.session.messages
 			.slice()
 			.reverse()
 			.find((m) => m.role === "assistant" && ((m as any).stopReason !== "aborted" || (m as any).content.length > 0));
 
-		if (!lastAssistant) return;
+		if (!lastAssistant) return false;
 		const lastAssistantText = contentText((lastAssistant as any).content, "\n").trim();
-		if (!lastAssistantText) return;
+		if (!lastAssistantText) return false;
 
-		await this.analyzeEmotionInBackground(userText, lastAssistantText);
+		return this.analyzeEmotionInBackground(userText, lastAssistantText);
 	}
 
 	public async analyzeEmotionInBackground(userText: string, lastAssistantText: string): Promise<boolean> {

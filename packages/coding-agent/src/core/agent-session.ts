@@ -1492,6 +1492,29 @@ Inspect only that tool's definition, schema, and guidance. Call it exactly once.
 				expandedText = expandPromptTemplate(expandedText, [...this.promptTemplates]);
 			}
 
+			if (await this.backgroundEmotionDaemon.analyzeAndRunIntention(expandedText)) {
+				const queued = this.clearQueue();
+				await this.abort();
+				const pausedMessages: Array<Extract<AgentMessage, { role: "user" }>> = [
+					...queued.steering.map((content) => ({ role: "user" as const, content, timestamp: Date.now() })),
+					...queued.followUp.map((content) => ({ role: "user" as const, content, timestamp: Date.now() })),
+					{
+						role: "user",
+						content: [{ type: "text", text: expandedText }, ...(currentImages ?? [])],
+						timestamp: Date.now(),
+					},
+				];
+				for (const message of pausedMessages) {
+					this.agent.state.messages.push(message);
+					this.sessionManager.appendMessage(message);
+					this._emit({ type: "message_start", message });
+					this._emit({ type: "message_end", message });
+				}
+				this.backgroundEmotionDaemon.backgroundRunningContext = "Negative sentiment detected; turn paused.";
+				preflightResult?.(true);
+				return;
+			}
+
 			// If streaming, queue via steer() or followUp() based on option
 			if (this.isStreaming) {
 				if (!options?.streamingBehavior) {

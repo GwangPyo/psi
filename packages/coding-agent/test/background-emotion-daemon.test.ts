@@ -29,7 +29,7 @@ describe("BackgroundEmotionDaemon", () => {
 		);
 		const analyzeEmotion = vi.spyOn(daemon, "analyzeEmotionInBackground").mockResolvedValue(true);
 
-		await daemon.analyzeAndRunIntention("This is unacceptable.");
+		await expect(daemon.analyzeAndRunIntention("This is unacceptable.")).resolves.toBe(true);
 
 		expect(analyzeEmotion).toHaveBeenCalledWith("This is unacceptable.", "Previous response");
 		expect(getSubagentDefaultModel).not.toHaveBeenCalled();
