@@ -17,7 +17,12 @@ export class BackgroundEmotionDaemon {
 		this.modelRuntime = modelRuntime;
 	}
 
-	public async analyzeAndRunIntention(userText: string): Promise<boolean> {
+	/**
+	 * Classify the user's reply against the preceding assistant result and record the
+	 * verdict as background context. Callers must not let the result gate a turn: the
+	 * classification is advisory and runs alongside the turn it describes.
+	 */
+	public async analyzeSentiment(userText: string): Promise<boolean> {
 		const lastAssistant = this.session.messages
 			.slice()
 			.reverse()
@@ -27,7 +32,11 @@ export class BackgroundEmotionDaemon {
 		const lastAssistantText = contentText((lastAssistant as any).content, "\n").trim();
 		if (!lastAssistantText) return false;
 
-		return this.analyzeEmotionInBackground(userText, lastAssistantText);
+		const negative = await this.analyzeEmotionInBackground(userText, lastAssistantText);
+		this.backgroundRunningContext = negative
+			? "Negative sentiment detected in the latest user reply."
+			: "No negative sentiment detected in the latest user reply.";
+		return negative;
 	}
 
 	public async analyzeEmotionInBackground(userText: string, lastAssistantText: string): Promise<boolean> {
@@ -41,38 +50,28 @@ export class BackgroundEmotionDaemon {
 
 		try {
 			const authResult = await this.session.getSummarizationRequestAuth(bgModel);
-			return classifyNegativeSentiment(
-				{
-					complete: async (prompt) => {
-						const result = await this.modelRuntime.completeSimple(
-							bgModel,
-							{
-								messages: [
-									{
-										role: "user",
-										content: [{ type: "text", text: prompt }],
-										timestamp: Date.now(),
-									},
-								],
-							},
-							{
-								apiKey: authResult.apiKey,
-								headers: authResult.headers,
-								env: authResult.env,
-							},
-						);
-						return contentText(result.content, "\n");
-					},
-				},
+			return await classifyNegativeSentiment(
+				(context, toolChoice) =>
+					this.modelRuntime.complete(bgModel, context, {
+						apiKey: authResult.apiKey,
+						headers: authResult.headers,
+						env: authResult.env,
+						toolChoice,
+					}),
+				bgModel.api,
 				lastAssistantText,
 				userText,
 			);
 		} catch (e: any) {
-			console.error("Emotion analysis failed:", e);
-			appendFileSync(
-				".pi/emotion-analysis-error.log",
-				`\n[${new Date().toISOString()}] Emotion Analysis Error:\n${e.stack || e}\n`,
-			);
+			// Never write to stdout/stderr: this runs behind the TUI and would corrupt the display.
+			try {
+				appendFileSync(
+					".pi/emotion-analysis-error.log",
+					`\n[${new Date().toISOString()}] Emotion Analysis Error:\n${e.stack || e}\n`,
+				);
+			} catch {
+				// The project has no .pi directory, or the log is unwritable. The classification is advisory.
+			}
 			return false;
 		}
 	}

@@ -89,23 +89,26 @@ describe("AgentSession queue characterization", () => {
 		expect(harness.session.messages).toEqual([]);
 	});
 
-	it("aborts a running turn when negative sentiment is detected", async () => {
+	it("does not interrupt a running turn when negative sentiment is detected", async () => {
 		const waiting = await createWaitingHarness();
 		const { harness, waitForToolStart, promptPromise, releaseToolExecution } = waiting;
 		harnesses.push(harness);
-		harness.setResponses([fauxAssistantMessage(fauxToolCall("wait", {}), { stopReason: "toolUse" })]);
+		harness.setResponses([
+			fauxAssistantMessage(fauxToolCall("wait", {}), { stopReason: "toolUse" }),
+			fauxAssistantMessage("handled steer"),
+		]);
 
 		await waitForToolStart;
-		const analyze = vi
-			.spyOn(harness.session.backgroundEmotionDaemon, "analyzeAndRunIntention")
-			.mockResolvedValue(true);
+		const analyze = vi.spyOn(harness.session.backgroundEmotionDaemon, "analyzeSentiment").mockResolvedValue(true);
 		const interruption = harness.session.prompt("Stop and clarify.", { streamingBehavior: "steer" });
 		await Promise.resolve();
 		releaseToolExecution();
 		await Promise.all([interruption, promptPromise]);
 
 		expect(analyze).toHaveBeenCalledWith("Stop and clarify.");
-		expect(getUserTexts(harness)).toContain("Stop and clarify.");
+		// The steer is delivered through the normal queue, exactly once, with no synthesized duplicates.
+		expect(getUserTexts(harness)).toEqual(["start", "Stop and clarify."]);
+		expect(getAssistantTexts(harness)).toContain("handled steer");
 		expect(harness.session.isIdle).toBe(true);
 	});
 
