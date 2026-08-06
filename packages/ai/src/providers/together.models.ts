@@ -29,6 +29,10 @@ export const TOGETHER_MODELS = values as {
 		id: "Qwen/Qwen3.7-Max";
 		provider: "together";
 	};
+	"deepseek-ai/DeepSeek-V4-Flash-0731": Model<"openai-completions"> & {
+		id: "deepseek-ai/DeepSeek-V4-Flash-0731";
+		provider: "together";
+	};
 	"deepseek-ai/DeepSeek-V4-Pro": Model<"openai-completions"> & {
 		id: "deepseek-ai/DeepSeek-V4-Pro";
 		provider: "together";

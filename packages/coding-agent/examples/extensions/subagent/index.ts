@@ -418,7 +418,7 @@ async function runSingleAgent(
 		if (wasAborted) {
 			currentResult.stopReason = "aborted";
 			currentResult.errorMessage = "Subagent was aborted";
-			currentResult.stderr = (currentResult.stderr + "\nSubagent was aborted").trim();
+			currentResult.stderr = `${currentResult.stderr}\nSubagent was aborted`.trim();
 		}
 		return currentResult;
 	} finally {

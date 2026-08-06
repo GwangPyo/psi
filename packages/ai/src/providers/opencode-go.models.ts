@@ -73,4 +73,8 @@ export const OPENCODE_GO_MODELS = values as {
 		id: "qwen3.7-plus";
 		provider: "opencode-go";
 	};
+	"qwen3.8-max": Model<"anthropic-messages"> & {
+		id: "qwen3.8-max";
+		provider: "opencode-go";
+	};
 };

@@ -49,8 +49,16 @@ export const OPENROUTER_MODELS = values as {
 		id: "anthropic/claude-fable-5";
 		provider: "openrouter";
 	};
+	"anthropic/claude-fable-5:batch": Model<"openai-completions"> & {
+		id: "anthropic/claude-fable-5:batch";
+		provider: "openrouter";
+	};
 	"anthropic/claude-haiku-4.5": Model<"openai-completions"> & {
 		id: "anthropic/claude-haiku-4.5";
+		provider: "openrouter";
+	};
+	"anthropic/claude-haiku-4.5:batch": Model<"openai-completions"> & {
+		id: "anthropic/claude-haiku-4.5:batch";
 		provider: "openrouter";
 	};
 	"anthropic/claude-opus-4": Model<"openai-completions"> & {
@@ -61,12 +69,24 @@ export const OPENROUTER_MODELS = values as {
 		id: "anthropic/claude-opus-4.1";
 		provider: "openrouter";
 	};
+	"anthropic/claude-opus-4.1:batch": Model<"openai-completions"> & {
+		id: "anthropic/claude-opus-4.1:batch";
+		provider: "openrouter";
+	};
 	"anthropic/claude-opus-4.5": Model<"openai-completions"> & {
 		id: "anthropic/claude-opus-4.5";
 		provider: "openrouter";
 	};
+	"anthropic/claude-opus-4.5:batch": Model<"openai-completions"> & {
+		id: "anthropic/claude-opus-4.5:batch";
+		provider: "openrouter";
+	};
 	"anthropic/claude-opus-4.6": Model<"openai-completions"> & {
 		id: "anthropic/claude-opus-4.6";
+		provider: "openrouter";
+	};
+	"anthropic/claude-opus-4.6:batch": Model<"openai-completions"> & {
+		id: "anthropic/claude-opus-4.6:batch";
 		provider: "openrouter";
 	};
 	"anthropic/claude-opus-4.7": Model<"openai-completions"> & {
@@ -77,12 +97,20 @@ export const OPENROUTER_MODELS = values as {
 		id: "anthropic/claude-opus-4.7-fast";
 		provider: "openrouter";
 	};
+	"anthropic/claude-opus-4.7:batch": Model<"openai-completions"> & {
+		id: "anthropic/claude-opus-4.7:batch";
+		provider: "openrouter";
+	};
 	"anthropic/claude-opus-4.8": Model<"openai-completions"> & {
 		id: "anthropic/claude-opus-4.8";
 		provider: "openrouter";
 	};
 	"anthropic/claude-opus-4.8-fast": Model<"openai-completions"> & {
 		id: "anthropic/claude-opus-4.8-fast";
+		provider: "openrouter";
+	};
+	"anthropic/claude-opus-4.8:batch": Model<"openai-completions"> & {
+		id: "anthropic/claude-opus-4.8:batch";
 		provider: "openrouter";
 	};
 	"anthropic/claude-opus-5": Model<"openai-completions"> & {
@@ -93,6 +121,10 @@ export const OPENROUTER_MODELS = values as {
 		id: "anthropic/claude-opus-5-fast";
 		provider: "openrouter";
 	};
+	"anthropic/claude-opus-5:batch": Model<"openai-completions"> & {
+		id: "anthropic/claude-opus-5:batch";
+		provider: "openrouter";
+	};
 	"anthropic/claude-sonnet-4": Model<"openai-completions"> & {
 		id: "anthropic/claude-sonnet-4";
 		provider: "openrouter";
@@ -101,12 +133,24 @@ export const OPENROUTER_MODELS = values as {
 		id: "anthropic/claude-sonnet-4.5";
 		provider: "openrouter";
 	};
+	"anthropic/claude-sonnet-4.5:batch": Model<"openai-completions"> & {
+		id: "anthropic/claude-sonnet-4.5:batch";
+		provider: "openrouter";
+	};
 	"anthropic/claude-sonnet-4.6": Model<"openai-completions"> & {
 		id: "anthropic/claude-sonnet-4.6";
 		provider: "openrouter";
 	};
+	"anthropic/claude-sonnet-4.6:batch": Model<"openai-completions"> & {
+		id: "anthropic/claude-sonnet-4.6:batch";
+		provider: "openrouter";
+	};
 	"anthropic/claude-sonnet-5": Model<"openai-completions"> & {
 		id: "anthropic/claude-sonnet-5";
+		provider: "openrouter";
+	};
+	"anthropic/claude-sonnet-5:batch": Model<"openai-completions"> & {
+		id: "anthropic/claude-sonnet-5:batch";
 		provider: "openrouter";
 	};
 	"arcee-ai/trinity-large-thinking": Model<"openai-completions"> & {
@@ -201,6 +245,14 @@ export const OPENROUTER_MODELS = values as {
 		id: "google/gemini-2.5-flash-lite";
 		provider: "openrouter";
 	};
+	"google/gemini-2.5-flash-lite:batch": Model<"openai-completions"> & {
+		id: "google/gemini-2.5-flash-lite:batch";
+		provider: "openrouter";
+	};
+	"google/gemini-2.5-flash:batch": Model<"openai-completions"> & {
+		id: "google/gemini-2.5-flash:batch";
+		provider: "openrouter";
+	};
 	"google/gemini-2.5-pro": Model<"openai-completions"> & {
 		id: "google/gemini-2.5-pro";
 		provider: "openrouter";
@@ -213,8 +265,16 @@ export const OPENROUTER_MODELS = values as {
 		id: "google/gemini-2.5-pro-preview-05-06";
 		provider: "openrouter";
 	};
+	"google/gemini-2.5-pro:batch": Model<"openai-completions"> & {
+		id: "google/gemini-2.5-pro:batch";
+		provider: "openrouter";
+	};
 	"google/gemini-3-flash-preview": Model<"openai-completions"> & {
 		id: "google/gemini-3-flash-preview";
+		provider: "openrouter";
+	};
+	"google/gemini-3-flash-preview:batch": Model<"openai-completions"> & {
+		id: "google/gemini-3-flash-preview:batch";
 		provider: "openrouter";
 	};
 	"google/gemini-3-pro-image": Model<"openai-completions"> & {
@@ -229,12 +289,20 @@ export const OPENROUTER_MODELS = values as {
 		id: "google/gemini-3.1-flash-lite-preview";
 		provider: "openrouter";
 	};
+	"google/gemini-3.1-flash-lite:batch": Model<"openai-completions"> & {
+		id: "google/gemini-3.1-flash-lite:batch";
+		provider: "openrouter";
+	};
 	"google/gemini-3.1-pro-preview": Model<"openai-completions"> & {
 		id: "google/gemini-3.1-pro-preview";
 		provider: "openrouter";
 	};
 	"google/gemini-3.1-pro-preview-customtools": Model<"openai-completions"> & {
 		id: "google/gemini-3.1-pro-preview-customtools";
+		provider: "openrouter";
+	};
+	"google/gemini-3.1-pro-preview:batch": Model<"openai-completions"> & {
+		id: "google/gemini-3.1-pro-preview:batch";
 		provider: "openrouter";
 	};
 	"google/gemini-3.5-flash": Model<"openai-completions"> & {
@@ -245,8 +313,20 @@ export const OPENROUTER_MODELS = values as {
 		id: "google/gemini-3.5-flash-lite";
 		provider: "openrouter";
 	};
+	"google/gemini-3.5-flash-lite:batch": Model<"openai-completions"> & {
+		id: "google/gemini-3.5-flash-lite:batch";
+		provider: "openrouter";
+	};
+	"google/gemini-3.5-flash:batch": Model<"openai-completions"> & {
+		id: "google/gemini-3.5-flash:batch";
+		provider: "openrouter";
+	};
 	"google/gemini-3.6-flash": Model<"openai-completions"> & {
 		id: "google/gemini-3.6-flash";
+		provider: "openrouter";
+	};
+	"google/gemini-3.6-flash:batch": Model<"openai-completions"> & {
+		id: "google/gemini-3.6-flash:batch";
 		provider: "openrouter";
 	};
 	"google/gemma-3-12b-it": Model<"openai-completions"> & {
@@ -289,8 +369,8 @@ export const OPENROUTER_MODELS = values as {
 		id: "inclusionai/ling-2.6-flash";
 		provider: "openrouter";
 	};
-	"inclusionai/ling-3.0-flash:free": Model<"openai-completions"> & {
-		id: "inclusionai/ling-3.0-flash:free";
+	"inclusionai/ling-3.0-flash": Model<"openai-completions"> & {
+		id: "inclusionai/ling-3.0-flash";
 		provider: "openrouter";
 	};
 	"inclusionai/ring-2.6-1t": Model<"openai-completions"> & {
@@ -337,6 +417,10 @@ export const OPENROUTER_MODELS = values as {
 		id: "meta/muse-spark-1.1";
 		provider: "openrouter";
 	};
+	"meta/muse-spark-1.2": Model<"openai-completions"> & {
+		id: "meta/muse-spark-1.2";
+		provider: "openrouter";
+	};
 	"minimax/minimax-m1": Model<"openai-completions"> & {
 		id: "minimax/minimax-m1";
 		provider: "openrouter";
@@ -359,6 +443,10 @@ export const OPENROUTER_MODELS = values as {
 	};
 	"minimax/minimax-m3": Model<"openai-completions"> & {
 		id: "minimax/minimax-m3";
+		provider: "openrouter";
+	};
+	"minimax/minimax-m3:batch": Model<"openai-completions"> & {
+		id: "minimax/minimax-m3:batch";
 		provider: "openrouter";
 	};
 	"mistralai/codestral-2508": Model<"openai-completions"> & {
@@ -449,6 +537,10 @@ export const OPENROUTER_MODELS = values as {
 		id: "moonshotai/kimi-k2.7-code";
 		provider: "openrouter";
 	};
+	"moonshotai/kimi-k2.7-code:batch": Model<"openai-completions"> & {
+		id: "moonshotai/kimi-k2.7-code:batch";
+		provider: "openrouter";
+	};
 	"moonshotai/kimi-k3": Model<"openai-completions"> & {
 		id: "moonshotai/kimi-k3";
 		provider: "openrouter";
@@ -485,6 +577,10 @@ export const OPENROUTER_MODELS = values as {
 		id: "nvidia/nemotron-3-ultra-550b-a55b";
 		provider: "openrouter";
 	};
+	"nvidia/nemotron-3-ultra-550b-a55b:batch": Model<"openai-completions"> & {
+		id: "nvidia/nemotron-3-ultra-550b-a55b:batch";
+		provider: "openrouter";
+	};
 	"nvidia/nemotron-3-ultra-550b-a55b:free": Model<"openai-completions"> & {
 		id: "nvidia/nemotron-3-ultra-550b-a55b:free";
 		provider: "openrouter";
@@ -509,6 +605,10 @@ export const OPENROUTER_MODELS = values as {
 		id: "openai/gpt-3.5-turbo-16k";
 		provider: "openrouter";
 	};
+	"openai/gpt-3.5-turbo:batch": Model<"openai-completions"> & {
+		id: "openai/gpt-3.5-turbo:batch";
+		provider: "openrouter";
+	};
 	"openai/gpt-4": Model<"openai-completions"> & {
 		id: "openai/gpt-4";
 		provider: "openrouter";
@@ -521,6 +621,10 @@ export const OPENROUTER_MODELS = values as {
 		id: "openai/gpt-4-turbo-preview";
 		provider: "openrouter";
 	};
+	"openai/gpt-4-turbo:batch": Model<"openai-completions"> & {
+		id: "openai/gpt-4-turbo:batch";
+		provider: "openrouter";
+	};
 	"openai/gpt-4.1": Model<"openai-completions"> & {
 		id: "openai/gpt-4.1";
 		provider: "openrouter";
@@ -529,8 +633,20 @@ export const OPENROUTER_MODELS = values as {
 		id: "openai/gpt-4.1-mini";
 		provider: "openrouter";
 	};
+	"openai/gpt-4.1-mini:batch": Model<"openai-completions"> & {
+		id: "openai/gpt-4.1-mini:batch";
+		provider: "openrouter";
+	};
 	"openai/gpt-4.1-nano": Model<"openai-completions"> & {
 		id: "openai/gpt-4.1-nano";
+		provider: "openrouter";
+	};
+	"openai/gpt-4.1-nano:batch": Model<"openai-completions"> & {
+		id: "openai/gpt-4.1-nano:batch";
+		provider: "openrouter";
+	};
+	"openai/gpt-4.1:batch": Model<"openai-completions"> & {
+		id: "openai/gpt-4.1:batch";
 		provider: "openrouter";
 	};
 	"openai/gpt-4o": Model<"openai-completions"> & {
@@ -557,20 +673,44 @@ export const OPENROUTER_MODELS = values as {
 		id: "openai/gpt-4o-mini-2024-07-18";
 		provider: "openrouter";
 	};
+	"openai/gpt-4o-mini:batch": Model<"openai-completions"> & {
+		id: "openai/gpt-4o-mini:batch";
+		provider: "openrouter";
+	};
+	"openai/gpt-4o:batch": Model<"openai-completions"> & {
+		id: "openai/gpt-4o:batch";
+		provider: "openrouter";
+	};
 	"openai/gpt-5": Model<"openai-completions"> & {
 		id: "openai/gpt-5";
+		provider: "openrouter";
+	};
+	"openai/gpt-5-codex:batch": Model<"openai-completions"> & {
+		id: "openai/gpt-5-codex:batch";
 		provider: "openrouter";
 	};
 	"openai/gpt-5-mini": Model<"openai-completions"> & {
 		id: "openai/gpt-5-mini";
 		provider: "openrouter";
 	};
+	"openai/gpt-5-mini:batch": Model<"openai-completions"> & {
+		id: "openai/gpt-5-mini:batch";
+		provider: "openrouter";
+	};
 	"openai/gpt-5-nano": Model<"openai-completions"> & {
 		id: "openai/gpt-5-nano";
 		provider: "openrouter";
 	};
+	"openai/gpt-5-nano:batch": Model<"openai-completions"> & {
+		id: "openai/gpt-5-nano:batch";
+		provider: "openrouter";
+	};
 	"openai/gpt-5-pro": Model<"openai-completions"> & {
 		id: "openai/gpt-5-pro";
+		provider: "openrouter";
+	};
+	"openai/gpt-5-pro:batch": Model<"openai-completions"> & {
+		id: "openai/gpt-5-pro:batch";
 		provider: "openrouter";
 	};
 	"openai/gpt-5.1": Model<"openai-completions"> & {
@@ -589,6 +729,10 @@ export const OPENROUTER_MODELS = values as {
 		id: "openai/gpt-5.1-codex-mini";
 		provider: "openrouter";
 	};
+	"openai/gpt-5.1:batch": Model<"openai-completions"> & {
+		id: "openai/gpt-5.1:batch";
+		provider: "openrouter";
+	};
 	"openai/gpt-5.2": Model<"openai-completions"> & {
 		id: "openai/gpt-5.2";
 		provider: "openrouter";
@@ -603,6 +747,14 @@ export const OPENROUTER_MODELS = values as {
 	};
 	"openai/gpt-5.2-pro": Model<"openai-completions"> & {
 		id: "openai/gpt-5.2-pro";
+		provider: "openrouter";
+	};
+	"openai/gpt-5.2-pro:batch": Model<"openai-completions"> & {
+		id: "openai/gpt-5.2-pro:batch";
+		provider: "openrouter";
+	};
+	"openai/gpt-5.2:batch": Model<"openai-completions"> & {
+		id: "openai/gpt-5.2:batch";
 		provider: "openrouter";
 	};
 	"openai/gpt-5.3-chat": Model<"openai-completions"> & {
@@ -621,12 +773,28 @@ export const OPENROUTER_MODELS = values as {
 		id: "openai/gpt-5.4-mini";
 		provider: "openrouter";
 	};
+	"openai/gpt-5.4-mini:batch": Model<"openai-completions"> & {
+		id: "openai/gpt-5.4-mini:batch";
+		provider: "openrouter";
+	};
 	"openai/gpt-5.4-nano": Model<"openai-completions"> & {
 		id: "openai/gpt-5.4-nano";
 		provider: "openrouter";
 	};
+	"openai/gpt-5.4-nano:batch": Model<"openai-completions"> & {
+		id: "openai/gpt-5.4-nano:batch";
+		provider: "openrouter";
+	};
 	"openai/gpt-5.4-pro": Model<"openai-completions"> & {
 		id: "openai/gpt-5.4-pro";
+		provider: "openrouter";
+	};
+	"openai/gpt-5.4-pro:batch": Model<"openai-completions"> & {
+		id: "openai/gpt-5.4-pro:batch";
+		provider: "openrouter";
+	};
+	"openai/gpt-5.4:batch": Model<"openai-completions"> & {
+		id: "openai/gpt-5.4:batch";
 		provider: "openrouter";
 	};
 	"openai/gpt-5.5": Model<"openai-completions"> & {
@@ -637,12 +805,28 @@ export const OPENROUTER_MODELS = values as {
 		id: "openai/gpt-5.5-pro";
 		provider: "openrouter";
 	};
+	"openai/gpt-5.5-pro:batch": Model<"openai-completions"> & {
+		id: "openai/gpt-5.5-pro:batch";
+		provider: "openrouter";
+	};
+	"openai/gpt-5.5:batch": Model<"openai-completions"> & {
+		id: "openai/gpt-5.5:batch";
+		provider: "openrouter";
+	};
 	"openai/gpt-5.6-luna": Model<"openai-completions"> & {
 		id: "openai/gpt-5.6-luna";
 		provider: "openrouter";
 	};
 	"openai/gpt-5.6-luna-pro": Model<"openai-completions"> & {
 		id: "openai/gpt-5.6-luna-pro";
+		provider: "openrouter";
+	};
+	"openai/gpt-5.6-luna-pro:batch": Model<"openai-completions"> & {
+		id: "openai/gpt-5.6-luna-pro:batch";
+		provider: "openrouter";
+	};
+	"openai/gpt-5.6-luna:batch": Model<"openai-completions"> & {
+		id: "openai/gpt-5.6-luna:batch";
 		provider: "openrouter";
 	};
 	"openai/gpt-5.6-sol": Model<"openai-completions"> & {
@@ -653,12 +837,32 @@ export const OPENROUTER_MODELS = values as {
 		id: "openai/gpt-5.6-sol-pro";
 		provider: "openrouter";
 	};
+	"openai/gpt-5.6-sol-pro:batch": Model<"openai-completions"> & {
+		id: "openai/gpt-5.6-sol-pro:batch";
+		provider: "openrouter";
+	};
+	"openai/gpt-5.6-sol:batch": Model<"openai-completions"> & {
+		id: "openai/gpt-5.6-sol:batch";
+		provider: "openrouter";
+	};
 	"openai/gpt-5.6-terra": Model<"openai-completions"> & {
 		id: "openai/gpt-5.6-terra";
 		provider: "openrouter";
 	};
 	"openai/gpt-5.6-terra-pro": Model<"openai-completions"> & {
 		id: "openai/gpt-5.6-terra-pro";
+		provider: "openrouter";
+	};
+	"openai/gpt-5.6-terra-pro:batch": Model<"openai-completions"> & {
+		id: "openai/gpt-5.6-terra-pro:batch";
+		provider: "openrouter";
+	};
+	"openai/gpt-5.6-terra:batch": Model<"openai-completions"> & {
+		id: "openai/gpt-5.6-terra:batch";
+		provider: "openrouter";
+	};
+	"openai/gpt-5:batch": Model<"openai-completions"> & {
+		id: "openai/gpt-5:batch";
 		provider: "openrouter";
 	};
 	"openai/gpt-audio": Model<"openai-completions"> & {
@@ -693,6 +897,10 @@ export const OPENROUTER_MODELS = values as {
 		id: "openai/o1";
 		provider: "openrouter";
 	};
+	"openai/o1:batch": Model<"openai-completions"> & {
+		id: "openai/o1:batch";
+		provider: "openrouter";
+	};
 	"openai/o3": Model<"openai-completions"> & {
 		id: "openai/o3";
 		provider: "openrouter";
@@ -705,8 +913,24 @@ export const OPENROUTER_MODELS = values as {
 		id: "openai/o3-mini-high";
 		provider: "openrouter";
 	};
+	"openai/o3-mini-high:batch": Model<"openai-completions"> & {
+		id: "openai/o3-mini-high:batch";
+		provider: "openrouter";
+	};
+	"openai/o3-mini:batch": Model<"openai-completions"> & {
+		id: "openai/o3-mini:batch";
+		provider: "openrouter";
+	};
 	"openai/o3-pro": Model<"openai-completions"> & {
 		id: "openai/o3-pro";
+		provider: "openrouter";
+	};
+	"openai/o3-pro:batch": Model<"openai-completions"> & {
+		id: "openai/o3-pro:batch";
+		provider: "openrouter";
+	};
+	"openai/o3:batch": Model<"openai-completions"> & {
+		id: "openai/o3:batch";
 		provider: "openrouter";
 	};
 	"openai/o4-mini": Model<"openai-completions"> & {
@@ -715,6 +939,14 @@ export const OPENROUTER_MODELS = values as {
 	};
 	"openai/o4-mini-high": Model<"openai-completions"> & {
 		id: "openai/o4-mini-high";
+		provider: "openrouter";
+	};
+	"openai/o4-mini-high:batch": Model<"openai-completions"> & {
+		id: "openai/o4-mini-high:batch";
+		provider: "openrouter";
+	};
+	"openai/o4-mini:batch": Model<"openai-completions"> & {
+		id: "openai/o4-mini:batch";
 		provider: "openrouter";
 	};
 	"openrouter/auto": Model<"openai-completions"> & {
@@ -933,6 +1165,10 @@ export const OPENROUTER_MODELS = values as {
 		id: "qwen/qwen3.7-plus";
 		provider: "openrouter";
 	};
+	"qwen/qwen3.8-max": Model<"openai-completions"> & {
+		id: "qwen/qwen3.8-max";
+		provider: "openrouter";
+	};
 	"rekaai/reka-edge": Model<"openai-completions"> & {
 		id: "rekaai/reka-edge";
 		provider: "openrouter";
@@ -975,6 +1211,10 @@ export const OPENROUTER_MODELS = values as {
 	};
 	"thinkingmachines/inkling-small": Model<"openai-completions"> & {
 		id: "thinkingmachines/inkling-small";
+		provider: "openrouter";
+	};
+	"thinkingmachines/inkling:batch": Model<"openai-completions"> & {
+		id: "thinkingmachines/inkling:batch";
 		provider: "openrouter";
 	};
 	"upstage/solar-pro-3": Model<"openai-completions"> & {
@@ -1047,6 +1287,10 @@ export const OPENROUTER_MODELS = values as {
 	};
 	"z-ai/glm-5.2": Model<"openai-completions"> & {
 		id: "z-ai/glm-5.2";
+		provider: "openrouter";
+	};
+	"z-ai/glm-5.2:batch": Model<"openai-completions"> & {
+		id: "z-ai/glm-5.2:batch";
 		provider: "openrouter";
 	};
 	"z-ai/glm-5v-turbo": Model<"openai-completions"> & {

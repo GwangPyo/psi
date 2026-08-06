@@ -209,6 +209,10 @@ export const OPENCODE_MODELS = values as {
 		id: "ling-3.0-flash-free";
 		provider: "opencode";
 	};
+	"longcat-2.0-free": Model<"openai-completions"> & {
+		id: "longcat-2.0-free";
+		provider: "opencode";
+	};
 	"mimo-v2.5-free": Model<"openai-completions"> & {
 		id: "mimo-v2.5-free";
 		provider: "opencode";

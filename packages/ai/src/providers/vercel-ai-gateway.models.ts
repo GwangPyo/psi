@@ -105,6 +105,10 @@ export const VERCEL_AI_GATEWAY_MODELS = values as {
 		id: "alibaba/qwen3.7-plus";
 		provider: "vercel-ai-gateway";
 	};
+	"alibaba/qwen3.8-max": Model<"anthropic-messages"> & {
+		id: "alibaba/qwen3.8-max";
+		provider: "vercel-ai-gateway";
+	};
 	"amazon/nova-2-lite": Model<"anthropic-messages"> & {
 		id: "amazon/nova-2-lite";
 		provider: "vercel-ai-gateway";
@@ -137,10 +141,6 @@ export const VERCEL_AI_GATEWAY_MODELS = values as {
 		id: "anthropic/claude-opus-4";
 		provider: "vercel-ai-gateway";
 	};
-	"anthropic/claude-opus-4.1": Model<"anthropic-messages"> & {
-		id: "anthropic/claude-opus-4.1";
-		provider: "vercel-ai-gateway";
-	};
 	"anthropic/claude-opus-4.5": Model<"anthropic-messages"> & {
 		id: "anthropic/claude-opus-4.5";
 		provider: "vercel-ai-gateway";
@@ -163,10 +163,6 @@ export const VERCEL_AI_GATEWAY_MODELS = values as {
 	};
 	"anthropic/claude-opus-5": Model<"anthropic-messages"> & {
 		id: "anthropic/claude-opus-5";
-		provider: "vercel-ai-gateway";
-	};
-	"anthropic/claude-opus-5-fast": Model<"anthropic-messages"> & {
-		id: "anthropic/claude-opus-5-fast";
 		provider: "vercel-ai-gateway";
 	};
 	"anthropic/claude-sonnet-4": Model<"anthropic-messages"> & {
@@ -293,8 +289,12 @@ export const VERCEL_AI_GATEWAY_MODELS = values as {
 		id: "inception/mercury-coder-small";
 		provider: "vercel-ai-gateway";
 	};
-	"inclusionai/ling-3.0-flash-free": Model<"anthropic-messages"> & {
-		id: "inclusionai/ling-3.0-flash-free";
+	"inclusionai/ling-3.0-flash": Model<"anthropic-messages"> & {
+		id: "inclusionai/ling-3.0-flash";
+		provider: "vercel-ai-gateway";
+	};
+	"inclusionai/ling-3.0-tiny-free": Model<"anthropic-messages"> & {
+		id: "inclusionai/ling-3.0-tiny-free";
 		provider: "vercel-ai-gateway";
 	};
 	"interfaze/interfaze-beta": Model<"anthropic-messages"> & {
@@ -339,6 +339,14 @@ export const VERCEL_AI_GATEWAY_MODELS = values as {
 	};
 	"meta/muse-spark-1.1": Model<"anthropic-messages"> & {
 		id: "meta/muse-spark-1.1";
+		provider: "vercel-ai-gateway";
+	};
+	"meta/muse-spark-1.2": Model<"anthropic-messages"> & {
+		id: "meta/muse-spark-1.2";
+		provider: "vercel-ai-gateway";
+	};
+	"meta/muse-spark-1.2-contributor": Model<"anthropic-messages"> & {
+		id: "meta/muse-spark-1.2-contributor";
 		provider: "vercel-ai-gateway";
 	};
 	"minimax/minimax-m2": Model<"anthropic-messages"> & {
